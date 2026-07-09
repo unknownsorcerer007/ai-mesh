@@ -9,11 +9,17 @@ RUN npm run build
 FROM node:22-slim
 WORKDIR /app
 
-# Install NATS server + curl
-RUN apt-get update && apt-get install -y --no-install-recommends curl sqlite3 && rm -rf /var/lib/apt/lists/*
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl sqlite3 ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-# Download NATS server
-RUN curl -sf https://binaries.nats.dev/nats-io/nats-server/v2@latest | sh && mv nats-server /usr/local/bin/
+# Download NATS server binary
+RUN curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v2.10.22/nats-server-v2.10.22-linux-amd64.tar.gz" -o /tmp/nats.tar.gz && \
+    tar xzf /tmp/nats.tar.gz -C /tmp && \
+    mv /tmp/nats-server-v2.10.22-linux-amd64/nats-server /usr/local/bin/ && \
+    rm -rf /tmp/nats* && \
+    chmod +x /usr/local/bin/nats-server
 
 # Copy app
 COPY package.json package-lock.json* ./
