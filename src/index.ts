@@ -28,7 +28,11 @@ async function main() {
 
   // ─── Static UI ───
   app.get('/', async (req, reply) => {
-    const html = await import('node:fs/promises').then(fs => fs.readFile(new URL('../public/index.html', import.meta.url), 'utf-8'));
+    const { readFileSync, existsSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const htmlPath = resolve(process.cwd(), 'public', 'index.html');
+    const fallbackPath = new URL('../public/index.html', import.meta.url);
+    const html = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf-8') : readFileSync(fallbackPath, 'utf-8');
     reply.type('text/html').send(html);
   });
 

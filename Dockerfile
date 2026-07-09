@@ -25,6 +25,7 @@ RUN curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v2.10.2
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist/ dist/
+COPY src/public/ public/
 COPY start-prod.sh /app/start-prod.sh
 RUN chmod +x /app/start-prod.sh
 
