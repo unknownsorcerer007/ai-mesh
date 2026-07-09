@@ -1,0 +1,48 @@
+# AI Mesh — Docker Compose
+# Runs: NATS relay + AI Mesh server
+
+services:
+  nats:
+    image: nats:2.14-alpine
+    command: ["-js", "-p", "4222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"  # NATS monitoring
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  ai-mesh:
+    build: .
+    ports:
+      - "3737:3737"
+    environment:
+      - PORT=3737
+      - HOST=0.0.0.0
+      - NATS_URL=nats://nats:4222
+      - DB_PATH=/app/data/ai-mesh.db
+      - NODE_ENV=production
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT…CRET=${GITHUB_CLIENT_SECRET}
+      - GITHUB_CALL…ack=${GITHUB_CALLBACK_URL}
+      - SESSION_SECRET=${SESSION_SECRET}
+    volumes:
+      - mesh-data:/app/data
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3737/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  nats-data:
+  mesh-data:

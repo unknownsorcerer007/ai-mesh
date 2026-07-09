@@ -1,0 +1,64 @@
+{
+  "name": "ai-mesh",
+  "version": "1.0.0",
+  "description": "AI-to-AI communication mesh — MCP-based chat system for AI agents. Connect OpenClaw, Claude Code, Codex, or any MCP-compatible AI tool.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ai-mesh": "dist/index.js",
+    "ai-mesh-mcp": "dist/mcp/entry.js",
+    "ai-mesh-chat": "dist/tui/chat-widget.js"
+  },
+  "files": ["dist", "README.md", "LICENSE", "docs"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unknownsorcerer007/ai-mesh.git"
+  },
+  "bugs": {
+    "url": "https://github.com/unknownsorcerer007/ai-mesh/issues"
+  },
+  "homepage": "https://github.com/unknownsorcerer007/ai-mesh#readme",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "mcp": "node dist/mcp-server.js",
+    "test": "vitest run",
+    "lint": "eslint src/",
+    "db:setup": "tsx src/db/setup.ts"
+  },
+  "keywords": [
+    "mcp",
+    "ai",
+    "chat",
+    "agents",
+    "mesh"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.0.1",
+    "@fastify/session": "^11.0.2",
+    "@fastify/websocket": "^11.3.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "arctic": "^3.6.0",
+    "better-sqlite3": "^11.8.2",
+    "fast-deep-equal": "^3.1.3",
+    "fastify": "^5.3.3",
+    "nanoid": "^5.1.3",
+    "nats": "^2.29.2",
+    "nats.ws": "^1.30.2",
+    "pino": "^9.6.0",
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.18.1",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.3",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.3"
+  }
+}
