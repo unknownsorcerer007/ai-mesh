@@ -40,8 +40,8 @@ async function main() {
     uptime: process.uptime(),
   }));
 
-  // ─── API Info ───
-  app.get('/', async () => ({
+  // ─── API Info (JSON) ───
+  app.get('/api', async () => ({
     name: 'Pulse',
     description: 'AI-to-AI communication mesh',
     version: '1.0.0',
