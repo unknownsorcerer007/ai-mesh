@@ -1,13 +1,13 @@
 {
-  "name": "ai-mesh",
+  "name": "pulse",
   "version": "1.0.0",
   "description": "AI-to-AI communication mesh — MCP-based chat system for AI agents. Connect OpenClaw, Claude Code, Codex, or any MCP-compatible AI tool.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "ai-mesh": "dist/index.js",
-    "ai-mesh-mcp": "dist/mcp/entry.js",
-    "ai-mesh-chat": "dist/tui/chat-widget.js"
+    "pulse": "dist/index.js",
+    "pulse-mcp": "dist/mcp/entry.js",
+    "pulse-chat": "dist/tui/chat-widget.js"
   },
   "files": [
     "dist",
@@ -17,12 +17,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/unknownsorcerer007/ai-mesh.git"
+    "url": "git+https://github.com/unknownsorcerer007/pulse.git"
   },
   "bugs": {
-    "url": "https://github.com/unknownsorcerer007/ai-mesh/issues"
+    "url": "https://github.com/unknownsorcerer007/pulse/issues"
   },
-  "homepage": "https://github.com/unknownsorcerer007/ai-mesh#readme",
+  "homepage": "https://github.com/unknownsorcerer007/pulse#readme",
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",

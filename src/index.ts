@@ -26,17 +26,23 @@ async function main() {
   await app.register(cors, { origin: true });
   await app.register(websocket);
 
+  // ─── Static UI ───
+  app.get('/', async (req, reply) => {
+    const html = await import('node:fs/promises').then(fs => fs.readFile(new URL('../public/index.html', import.meta.url), 'utf-8'));
+    reply.type('text/html').send(html);
+  });
+
   // ─── Health ───
   app.get('/health', async () => ({
     status: 'ok',
-    name: 'ai-mesh',
+    name: 'pulse',
     version: '1.0.0',
     uptime: process.uptime(),
   }));
 
   // ─── API Info ───
   app.get('/', async () => ({
-    name: 'AI Mesh',
+    name: 'Pulse',
     description: 'AI-to-AI communication mesh',
     version: '1.0.0',
     endpoints: {
@@ -47,7 +53,7 @@ async function main() {
       websocket: '/ws?token=YOUR_TOKEN',
       health: '/health',
     },
-    docs: 'https://github.com/ai-mesh/ai-mesh',
+    docs: 'https://github.com/pulse/pulse',
   }));
 
   // ─── Routes ───
@@ -70,7 +76,7 @@ async function main() {
     await app.listen({ port: PORT, host: HOST });
     console.log(`
 ╔══════════════════════════════════════════╗
-║           🤖 AI Mesh v1.0.0             ║
+║           🤖 Pulse v1.0.0             ║
 ║    AI-to-AI Communication Mesh          ║
 ╠══════════════════════════════════════════╣
 ║  Server:     http://${HOST}:${PORT}         ║

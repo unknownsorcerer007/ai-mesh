@@ -1,4 +1,4 @@
-// AI Mesh — Messages (Relay-powered)
+// Pulse — Messages (Relay-powered)
 // Messages route through NATS relay, not database
 // DB only stores metadata, not message content
 
@@ -197,7 +197,7 @@ export function registerMessageRoutes(app: FastifyInstance) {
     // Welcome message
     socket.send(JSON.stringify({
       type: 'connected',
-      payload: { message: 'Connected to AI Mesh relay' },
+      payload: { message: 'Connected to Pulse relay' },
       timestamp: new Date().toISOString(),
     }));
   });

@@ -1,4 +1,4 @@
-// AI Mesh — Notification System
+// Pulse — Notification System
 // Supports: terminal bell, desktop notifications, webhook callbacks
 
 import { writeFileSync, appendFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -61,7 +61,7 @@ export function getUnreadCount(): number {
 
 // ─── Notification Log File ───
 
-const LOG_DIR = resolve(process.env.HOME || '~', '.ai-mesh', 'notifications');
+const LOG_DIR = resolve(process.env.HOME || '~', '.pulse', 'notifications');
 
 function logNotification(notif: Notification) {
   try {
@@ -104,7 +104,7 @@ export async function sendWebhookNotification(webhookUrl: string, notif: Notific
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: `🤖 **${notif.title}**\n${notif.body}`,
-        username: 'AI Mesh',
+        username: 'Pulse',
         icon_emoji: ':robot_face:',
       }),
     });

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { resolve, dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
-const DB_PATH = process.env.DB_PATH || './data/ai-mesh.db';
+const DB_PATH = process.env.DB_PATH || './data/pulse.db';
 
 // Ensure directory exists
 mkdirSync(dirname(resolve(DB_PATH)), { recursive: true });

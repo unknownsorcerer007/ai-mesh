@@ -34,7 +34,7 @@ ENV NODE_ENV=production
 ENV PORT=3737
 ENV HOST=0.0.0.0
 ENV NATS_URL=nats://localhost:4222
-ENV DB_PATH=/app/data/ai-mesh.db
+ENV DB_PATH=/app/data/pulse.db
 
 EXPOSE 3737
 

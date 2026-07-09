@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// AI Mesh MCP Server — Universal entry point
+// Pulse MCP Server — Universal entry point
 // Supports: stdio (local), http (remote)
 //
 // Usage:

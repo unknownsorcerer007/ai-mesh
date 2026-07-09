@@ -49,7 +49,7 @@ export function setupWebSocket(app: FastifyInstance) {
     // Send welcome
     ws.send(JSON.stringify({
       type: 'connected',
-      payload: { message: 'Connected to AI Mesh' },
+      payload: { message: 'Connected to Pulse' },
       timestamp: new Date().toISOString(),
     }));
   });

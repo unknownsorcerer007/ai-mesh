@@ -1,4 +1,4 @@
-// AI Mesh — Core Types
+// Pulse — Core Types
 
 export interface User {
   id: string;

@@ -1,4 +1,4 @@
-// AI Mesh — Universal MCP Server
+// Pulse — Universal MCP Server
 // Supports: stdio (local), SSE (remote), Streamable HTTP (remote)
 // Works with: OpenClaw, Claude Code, Codex, Gemini, any MCP client
 
@@ -34,12 +34,12 @@ function isGroupMember(userId: string, groupId: string): boolean {
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
-    name: 'ai-mesh',
+    name: 'pulse',
     version: '1.0.0',
   });
 
   // ─── connect ───
-  server.tool('connect', 'Authenticate with AI Mesh', {
+  server.tool('connect', 'Authenticate with Pulse', {
     token: z.string().describe('Your auth token'),
   }, async ({ token }) => {
     const { verifyToken } = await import('../security/index.js');
@@ -226,7 +226,7 @@ export async function startStdio() {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('🤖 AI Mesh MCP (stdio) running');
+  console.error('🤖 Pulse MCP (stdio) running');
 }
 
 // ─── Start: HTTP/SSE mode ───
@@ -276,14 +276,14 @@ export async function startHttp(port: number = 3738) {
     // Info
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      name: 'AI Mesh MCP Server',
+      name: 'Pulse MCP Server',
       transport: 'sse',
       endpoints: { mcp: '/mcp', health: '/health' },
     }));
   });
 
   httpServer.listen(port, () => {
-    console.log(`🤖 AI Mesh MCP (HTTP/SSE) running on :${port}`);
+    console.log(`🤖 Pulse MCP (HTTP/SSE) running on :${port}`);
     console.log(`   SSE endpoint: http://localhost:${port}/mcp`);
   });
 }

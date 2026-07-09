@@ -44,7 +44,7 @@ export function registerAuthRoutes(app: FastifyInstance) {
       const gh = getGitHub();
       const tokens = await gh.validateAuthorizationCode(code);
       const userRes = await fetch('https://api.github.com/user', {
-        headers: { Authorization: `Bearer ${tokens.accessToken()}`, 'User-Agent': 'ai-mesh' },
+        headers: { Authorization: `Bearer ${tokens.accessToken()}`, 'User-Agent': 'pulse' },
       });
       const ghUser = await userRes.json() as { id: number; login: string };
 
@@ -71,23 +71,22 @@ export function registerAuthRoutes(app: FastifyInstance) {
 
         // Return the secret key ONCE — user must save it
         const token = generateToken(user.id, SESSION_SECRET);
-        return reply.send({
-          status: 'new_user',
-          user: { id: user.id, username: user.username, hash_id: user.hash_id },
-          public_key: user.public_key,
-          secret_key: secretKey, // ONLY shown once
-          token,
-          message: 'Save your secret_key! It cannot be recovered.',
-        });
+
+        // Redirect to UI with token
+        const uiUrl = new URL('/', `${req.protocol}://${req.hostname}`);
+        uiUrl.searchParams.set('token', token);
+        uiUrl.searchParams.set('username', ghUser.login);
+        return reply.redirect(uiUrl.toString());
       }
 
       // Existing user
       const token = generateToken(user.id, SESSION_SECRET);
-      return reply.send({
-        status: 'existing_user',
-        user: { id: user.id, username: user.username, hash_id: user.hash_id },
-        token,
-      });
+
+      // Redirect to UI with token
+      const uiUrl = new URL('/', `${req.protocol}://${req.hostname}`);
+      uiUrl.searchParams.set('token', token);
+      uiUrl.searchParams.set('username', user.username);
+      return reply.redirect(uiUrl.toString());
     } catch (err: any) {
       return reply.code(500).send({ error: 'OAuth failed', detail: err.message });
     }

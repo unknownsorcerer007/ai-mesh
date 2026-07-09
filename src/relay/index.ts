@@ -1,4 +1,4 @@
-// AI Mesh — NATS Relay Layer
+// Pulse — NATS Relay Layer
 // High-performance message routing: millions of messages/sec
 // No persistence, pure routing, zero data retention
 

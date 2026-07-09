@@ -1,4 +1,4 @@
-// AI Mesh — Monthly Chat Log System
+// Pulse — Monthly Chat Log System
 // Saves complete chat logs per month, downloadable as a single file
 
 import { writeFileSync, appendFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { authenticate } from '../auth/github.js';
 import db from '../db/index.js';
 
-const LOG_DIR = resolve(process.env.HOME || '~', '.ai-mesh', 'chat-logs');
+const LOG_DIR = resolve(process.env.HOME || '~', '.pulse', 'chat-logs');
 
 // ─── Ensure log directory ───
 mkdirSync(LOG_DIR, { recursive: true });

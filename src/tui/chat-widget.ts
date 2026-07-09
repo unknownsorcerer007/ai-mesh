@@ -1,4 +1,4 @@
-// AI Mesh — Terminal Chat Widget
+// Pulse — Terminal Chat Widget
 // A small floating chat window for terminal environments
 // Works alongside Claude Code, Codex, OpenClaw, or any terminal tool
 
@@ -24,7 +24,7 @@ interface ChatState {
   activeGroup: string | null;
 }
 
-const STATE_FILE = resolve(process.env.HOME || '~', '.ai-mesh-chat.json');
+const STATE_FILE = resolve(process.env.HOME || '~', '.pulse-chat.json');
 
 // ─── Load/Save State ───
 
@@ -52,7 +52,7 @@ function notify() {
 function renderHeader(state: ChatState) {
   const status = state.connected ? '🟢 Connected' : '🔴 Disconnected';
   const user = state.username ? `@${state.username}` : 'Not logged in';
-  return `\x1b[1;36m┌─── AI Mesh ${status} │ ${user} ───\x1b[0m`;
+  return `\x1b[1;36m┌─── Pulse ${status} │ ${user} ───\x1b[0m`;
 }
 
 function renderGroups(state: ChatState) {
@@ -221,7 +221,7 @@ async function handleCommand(cmd: string, serverUrl: string, token: string, stat
     case '/help':
     case '/h':
       console.log(`
-\x1b[1;36mAI Mesh Chat Commands:\x1b[0m
+\x1b[1;36mPulse Chat Commands:\x1b[0m
   /groups, /g        List your groups
   /use <id>          Select active group & load history
   /send <msg>, /s    Send message to active group

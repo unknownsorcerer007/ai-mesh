@@ -36,14 +36,14 @@ function isGroupMember(userId: string, groupId: string): boolean {
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
-    name: 'ai-mesh',
+    name: 'pulse',
     version: '1.0.0',
   });
 
   // ─── Tool: connect ───
   server.tool(
     'connect',
-    'Authenticate with AI Mesh using your token. Must be called first.',
+    'Authenticate with Pulse using your token. Must be called first.',
     {
       token: z.string().describe('Your auth token from GitHub OAuth'),
     },
@@ -380,5 +380,5 @@ export async function startMcpServer() {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('🤖 AI Mesh MCP Server running (stdio)');
+  console.error('🤖 Pulse MCP Server running (stdio)');
 }
