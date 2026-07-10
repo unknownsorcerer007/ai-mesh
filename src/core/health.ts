@@ -31,7 +31,16 @@ export function unregisterHealthCheck(blockName: string) {
   healthChecks.delete(blockName);
 }
 
-// ─── Run All Health Checks ───
+// ─── Run All Health Checks (with timeout) ───
+const HEALTH_CHECK_TIMEOUT_MS = 5000; // 5 seconds per check
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), ms)),
+  ]);
+}
+
 export async function getSystemHealth(): Promise<SystemHealth> {
   const blocks: Record<string, BlockHealth> = {};
   let worstStatus: BlockStatus = 'healthy';
@@ -41,7 +50,7 @@ export async function getSystemHealth(): Promise<SystemHealth> {
     checks.map(async ([name, check]) => {
       const start = Date.now();
       try {
-        const health = await check();
+        const health = await withTimeout(check(), HEALTH_CHECK_TIMEOUT_MS);
         health.latencyMs = Date.now() - start;
         health.lastCheck = new Date().toISOString();
         return { name, health };

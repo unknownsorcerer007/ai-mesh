@@ -5,6 +5,7 @@
 import { appendFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { registerHealthCheck, type BlockHealth } from '../../core/health.js';
+import { authenticate } from '../auth/index.js';
 
 const LOG_DIR = resolve(process.env.HOME || process.env.USERPROFILE || '/tmp', '.ai-mesh', 'chat-logs');
 const MAX_LOG_FILE_SIZE = 50 * 1024 * 1024; // 50MB per file
@@ -67,8 +68,6 @@ export function logFullMessage(params: {
 }
 
 export function registerLogRoutes(app: any) {
-  const { authenticate } = require('../auth/index.js');
-
   registerHealthCheck('logs', async (): Promise<BlockHealth> => {
     return { status: 'healthy', message: `Log dir: ${LOG_DIR}`, lastCheck: '' };
   });

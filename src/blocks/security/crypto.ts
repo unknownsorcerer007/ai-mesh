@@ -84,27 +84,32 @@ export function verifyToken(token: string, secret: string, ttlMs: number = 7 * 2
   }
 }
 
-// ─── Token Blacklist (in-memory, per-instance) ───
-const tokenBlacklist = new Set<string>();
-const blacklistExpiry = new Map<string, number>();
-
+// ─── Token Blacklist (SQLite-backed) ───
 export function blacklistToken(token: string, ttlMs: number = 7 * 24 * 60 * 60 * 1000) {
-  tokenBlacklist.add(token);
-  blacklistExpiry.set(token, Date.now() + ttlMs);
+  try {
+    const { getDb } = require('../../shared/db.js');
+    const db = getDb();
+    const expiresAt = Date.now() + ttlMs;
+    db.prepare('INSERT OR IGNORE INTO token_blacklist (token, expires_at) VALUES (?, ?)').run(token, expiresAt);
+  } catch { /* db may not be ready */ }
 }
 
 export function isTokenBlacklisted(token: string): boolean {
-  return tokenBlacklist.has(token);
+  try {
+    const { getDb } = require('../../shared/db.js');
+    const db = getDb();
+    const row = db.prepare('SELECT 1 FROM token_blacklist WHERE token = ? AND expires_at > ?').get(token, Date.now());
+    return !!row;
+  } catch {
+    return false;
+  }
 }
 
 // Cleanup expired blacklist entries
-const blacklistCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [token, expiry] of blacklistExpiry) {
-    if (now > expiry) {
-      tokenBlacklist.delete(token);
-      blacklistExpiry.delete(token);
-    }
-  }
-}, 300_000);
-blacklistCleanup.unref();
+export function cleanupBlacklist() {
+  try {
+    const { getDb } = require('../../shared/db.js');
+    const db = getDb();
+    db.prepare('DELETE FROM token_blacklist WHERE expires_at <= ?').run(Date.now());
+  } catch { /* db may not be ready */ }
+}

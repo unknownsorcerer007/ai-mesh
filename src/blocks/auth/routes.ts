@@ -11,17 +11,29 @@ import { generateKeyPair, generateHashId, generateToken, blacklistToken } from '
 import { authenticate } from './middleware.js';
 import type { User } from '../../shared/types.js';
 
-// OAuth state store (in-memory, per-instance)
-const oauthStates = new Map<string, number>();
-const stateCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [state, expiry] of oauthStates) {
-    if (now > expiry) oauthStates.delete(state);
-  }
-}, 300_000);
-stateCleanup.unref();
-
 let github: GitHub | null = null;
+
+// ─── OAuth State Helpers (SQLite-backed) ───
+function saveOAuthState(state: string) {
+  const db = getDb();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  db.prepare('INSERT OR REPLACE INTO oauth_states (state, expires_at) VALUES (?, ?)').run(state, expiresAt);
+}
+
+function consumeOAuthState(state: string): boolean {
+  const db = getDb();
+  const row = db.prepare('SELECT expires_at FROM oauth_states WHERE state = ?').get(state) as { expires_at: number } | undefined;
+  if (!row) return false;
+  db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state);
+  return row.expires_at > Date.now();
+}
+
+function cleanupExpiredOAuthStates() {
+  try {
+    const db = getDb();
+    db.prepare('DELETE FROM oauth_states WHERE expires_at <= ?').run(Date.now());
+  } catch { /* db may not be ready */ }
+}
 
 function getGitHub(): GitHub {
   if (!github) {
@@ -38,6 +50,9 @@ export function registerAuthRoutes(app: FastifyInstance) {
   const config = getConfig();
   const db = getDb();
 
+  // Cleanup expired OAuth states on startup
+  cleanupExpiredOAuthStates();
+
   // Health check
   registerHealthCheck('auth', async (): Promise<BlockHealth> => {
     try {
@@ -53,7 +68,7 @@ export function registerAuthRoutes(app: FastifyInstance) {
     try {
       const gh = getGitHub();
       const state = nanoid();
-      oauthStates.set(state, Date.now() + 10 * 60 * 1000);
+      saveOAuthState(state);
       const url = gh.createAuthorizationURL(state, ['read:user']);
       reply.redirect(url.toString());
     } catch (err: any) {
@@ -65,10 +80,9 @@ export function registerAuthRoutes(app: FastifyInstance) {
   app.get('/auth/github/callback', async (req: FastifyRequest<{ Querystring: { code?: string; state?: string } }>, reply) => {
     const { code, state } = req.query;
     if (!code) return reply.code(400).send({ error: 'MISSING_CODE', message: 'Missing code' });
-    if (!state || !oauthStates.has(state)) {
+    if (!state || !consumeOAuthState(state)) {
       return reply.code(400).send({ error: 'INVALID_STATE', message: 'Invalid or expired OAuth state' });
     }
-    oauthStates.delete(state);
 
     try {
       const gh = getGitHub();

@@ -17,7 +17,7 @@ services:
       timeout: 3s
       retries: 3
 
-  pulse:
+  ai-mesh:
     build: .
     ports:
       - "3737:3737"
@@ -25,7 +25,7 @@ services:
       - PORT=3737
       - HOST=0.0.0.0
       - NATS_URL=nats://nats:4222
-      - DB_PATH=/app/data/pulse.db
+      - DB_PATH=/app/data/ai-mesh.db
       - NODE_ENV=production
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}

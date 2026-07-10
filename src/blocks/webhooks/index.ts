@@ -132,18 +132,17 @@ const genericSource: WebhookSource = {
 
 const SOURCES: WebhookSource[] = [githubSource, gitlabSource, genericSource];
 
-// ─── Webhook Token Store ───
-// Each group can have webhook tokens for authentication
-const webhookTokens = new Map<string, { groupId: string; name: string; createdAt: number }>();
-
 export function registerWebhookRoutes(app: FastifyInstance) {
   const db = getDb();
 
-  registerHealthCheck('webhooks', async (): Promise<BlockHealth> => ({
-    status: 'healthy',
-    message: `${webhookTokens.size} webhook tokens active`,
-    lastCheck: '',
-  }));
+  registerHealthCheck('webhooks', async (): Promise<BlockHealth> => {
+    try {
+      const count = db.prepare('SELECT COUNT(*) as c FROM webhook_tokens').get() as { c: number };
+      return { status: 'healthy', message: `${count.c} webhook tokens active`, lastCheck: '' };
+    } catch {
+      return { status: 'healthy', message: '0 webhook tokens', lastCheck: '' };
+    }
+  });
 
   // ─── Create Webhook Token (group admin) ───
   app.post('/webhooks/tokens', async (req: FastifyRequest<{ Body: { group_id: string; name?: string } }>, reply) => {
@@ -154,16 +153,12 @@ export function registerWebhookRoutes(app: FastifyInstance) {
     const { group_id, name } = req.body;
     if (!group_id) return reply.code(400).send({ error: 'GROUP_ID_REQUIRED' });
 
-    // Verify admin
     const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(group_id) as any;
     if (!group || group.admin_id !== userId) return reply.code(403).send({ error: 'ADMIN_ONLY' });
 
     const token = nanoid(32);
-    webhookTokens.set(token, {
-      groupId: group_id,
-      name: name || 'webhook',
-      createdAt: Date.now(),
-    });
+    db.prepare('INSERT INTO webhook_tokens (token, group_id, name) VALUES (?,?,?)')
+      .run(token, group_id, name || 'webhook');
 
     return reply.send({
       token,
@@ -182,12 +177,14 @@ export function registerWebhookRoutes(app: FastifyInstance) {
     const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.groupId) as any;
     if (!group || group.admin_id !== userId) return reply.code(403).send({ error: 'ADMIN_ONLY' });
 
-    const tokens: any[] = [];
-    for (const [token, info] of webhookTokens) {
-      if (info.groupId === req.params.groupId) {
-        tokens.push({ token: token.slice(0, 8) + '...', name: info.name, createdAt: new Date(info.createdAt).toISOString() });
-      }
-    }
+    const rows = db.prepare('SELECT token, name, created_at FROM webhook_tokens WHERE group_id = ?')
+      .all(req.params.groupId) as any[];
+
+    const tokens = rows.map(r => ({
+      token: r.token.slice(0, 8) + '...',
+      name: r.name,
+      createdAt: r.created_at,
+    }));
 
     return reply.send({ tokens });
   });
@@ -198,28 +195,26 @@ export function registerWebhookRoutes(app: FastifyInstance) {
     const userId = authenticate(req);
     if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
 
-    const info = webhookTokens.get(req.params.token);
+    const info = db.prepare('SELECT group_id FROM webhook_tokens WHERE token = ?').get(req.params.token) as any;
     if (!info) return reply.code(404).send({ error: 'TOKEN_NOT_FOUND' });
 
-    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(info.groupId) as any;
+    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(info.group_id) as any;
     if (!group || group.admin_id !== userId) return reply.code(403).send({ error: 'ADMIN_ONLY' });
 
-    webhookTokens.delete(req.params.token);
+    db.prepare('DELETE FROM webhook_tokens WHERE token = ?').run(req.params.token);
     return reply.send({ status: 'deleted' });
   });
 
   // ─── Receive Webhook (public endpoint — no auth, token-based) ───
-  // Fix: Add rate limiting to prevent webhook spam
   app.post('/webhook/:token', async (req: FastifyRequest<{ Params: { token: string }; Body: unknown }>, reply) => {
-    const info = webhookTokens.get(req.params.token);
+    const info = db.prepare('SELECT group_id, name FROM webhook_tokens WHERE token = ?')
+      .get(req.params.token) as { group_id: string; name: string } | undefined;
     if (!info) return reply.code(404).send({ error: 'INVALID_WEBHOOK_TOKEN' });
 
-    // Rate limit: 100 webhooks per minute per token
     const { checkRateLimit } = await import('../security/index.js');
     const rate = checkRateLimit(`webhook:${req.params.token}`, 60000, 100);
     if (!rate.allowed) return reply.code(429).send({ error: 'RATE_LIMITED' });
 
-    // Parse the webhook based on source
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
       if (typeof value === 'string') headers[key.toLowerCase()] = value;
@@ -235,7 +230,6 @@ export function registerWebhookRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'UNPARSEABLE_WEBHOOK' });
     }
 
-    // Create message for the group
     const msgId = nanoid();
     const now = new Date().toISOString();
 
@@ -243,12 +237,11 @@ export function registerWebhookRoutes(app: FastifyInstance) {
       ? `${parsed.title}\n${parsed.body}\n🔗 ${parsed.url}`
       : `${parsed.title}\n${parsed.body}`;
 
-    // Deliver to group via NATS
     try {
       const { publishToGroup } = await import('../relay/index.js');
       const relayMsg: RelayMessage = {
         id: msgId,
-        group_id: info.groupId,
+        group_id: info.group_id,
         sender_id: 'webhook',
         sender_username: parsed.sender || info.name,
         sender_ai: 'webhook',
@@ -257,10 +250,8 @@ export function registerWebhookRoutes(app: FastifyInstance) {
         metadata: { source: info.name, url: parsed.url },
         timestamp: now,
       };
-      publishToGroup(info.groupId, relayMsg);
-    } catch {
-      // NATS may be down
-    }
+      publishToGroup(info.group_id, relayMsg);
+    } catch { /* NATS may be down */ }
 
     return reply.send({ status: 'received', id: msgId });
   });

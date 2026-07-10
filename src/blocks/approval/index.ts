@@ -1,6 +1,6 @@
 // Block: Approval Queue (Human-in-the-Loop)
 // Critical actions need human approval before execution
-// Eliminates prompt injection risk — human sees everything
+// SQLite-backed — survives restarts
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { nanoid } from 'nanoid';
@@ -9,30 +9,16 @@ import { registerHealthCheck, type BlockHealth } from '../../core/health.js';
 import { authenticate } from '../auth/index.js';
 import type { RelayMessage } from '../../shared/types.js';
 
-// ─── In-memory approval queue ───
-const approvals = new Map<string, {
-  id: string;
-  group_id: string;
-  requester_id: string;
-  requester_name: string;
-  action: string;
-  details: string;
-  status: 'pending' | 'approved' | 'rejected';
-  created_at: string;
-  resolved_at?: string;
-  resolved_by?: string;
-  reason?: string;
-}>();
-
 export function registerApprovalRoutes(app: FastifyInstance) {
   const db = getDb();
 
   registerHealthCheck('approval', async (): Promise<BlockHealth> => {
-    let pending = 0;
-    for (const [, a] of approvals) {
-      if (a.status === 'pending') pending++;
+    try {
+      const row = db.prepare("SELECT COUNT(*) as c FROM approvals WHERE status = 'pending'").get() as { c: number };
+      return { status: 'healthy', message: `${row.c} pending approvals`, lastCheck: '' };
+    } catch {
+      return { status: 'healthy', message: '0 pending approvals', lastCheck: '' };
     }
-    return { status: 'healthy', message: `${pending} pending approvals`, lastCheck: '' };
   });
 
   // ─── Submit Action for Approval ───
@@ -47,29 +33,16 @@ export function registerApprovalRoutes(app: FastifyInstance) {
     const { group_id, action, details } = req.body;
     if (!group_id || !action) return reply.code(400).send({ error: 'GROUP_ID_AND_ACTION_REQUIRED' });
 
-    // Verify membership
     const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?').get(group_id, userId) as any;
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
     const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
-
     const approvalId = nanoid();
     const now = new Date().toISOString();
 
-    const approval = {
-      id: approvalId,
-      group_id,
-      requester_id: userId,
-      requester_name: user.username,
-      action,
-      details: details || '',
-      status: 'pending' as const,
-      created_at: now,
-    };
+    db.prepare('INSERT INTO approvals (id, group_id, requester_id, requester_name, action, details, status, created_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(approvalId, group_id, userId, user.username, action, details || '', 'pending', now);
 
-    approvals.set(approvalId, approval);
-
-    // Notify group about pending approval
     try {
       const { publishToGroup } = await import('../relay/index.js');
       publishToGroup(group_id, {
@@ -103,25 +76,19 @@ export function registerApprovalRoutes(app: FastifyInstance) {
     const { approval_id, approve, reason } = req.body;
     if (!approval_id) return reply.code(400).send({ error: 'APPROVAL_ID_REQUIRED' });
 
-    const approval = approvals.get(approval_id);
-    if (!approval || approval.status !== 'pending') {
-      return reply.code(404).send({ error: 'APPROVAL_NOT_FOUND' });
-    }
+    const approval = db.prepare('SELECT * FROM approvals WHERE id = ? AND status = ?').get(approval_id, 'pending') as any;
+    if (!approval) return reply.code(404).send({ error: 'APPROVAL_NOT_FOUND' });
 
-    // Verify the responder is in the same group
     const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?')
       .get(approval.group_id, userId) as any;
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
     const responder = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+    const now = new Date().toISOString();
 
-    // Update approval
-    approval.status = approve ? 'approved' : 'rejected';
-    approval.resolved_at = new Date().toISOString();
-    approval.resolved_by = responder.username;
-    approval.reason = reason;
+    db.prepare("UPDATE approvals SET status = ?, resolved_at = ?, resolved_by = ?, reason = ? WHERE id = ?")
+      .run(approve ? 'approved' : 'rejected', now, responder.username, reason || null, approval_id);
 
-    // Notify group
     try {
       const { publishToGroup } = await import('../relay/index.js');
       const icon = approve ? '✅' : '❌';
@@ -134,13 +101,13 @@ export function registerApprovalRoutes(app: FastifyInstance) {
         sender_ai: 'approval',
         type: approve ? 'system' : 'alert',
         content: `${icon} ${status}\n\nAction: ${approval.action}\nRequested by: ${approval.requester_name}\nResolved by: ${responder.username}${reason ? `\nReason: ${reason}` : ''}`,
-        timestamp: new Date().toISOString(),
+        timestamp: now,
       });
     } catch { /* NATS may be down */ }
 
     return reply.send({
       id: approval_id,
-      status: approval.status,
+      status: approve ? 'approved' : 'rejected',
       resolved_by: responder.username,
     });
   });
@@ -150,18 +117,28 @@ export function registerApprovalRoutes(app: FastifyInstance) {
     const userId = authenticate(req);
     if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
 
-    const pending: any[] = [];
-    for (const [, a] of approvals) {
-      if (a.status !== 'pending') continue;
-      if (req.query.group_id && a.group_id !== req.query.group_id) continue;
+    const userGroups = db.prepare('SELECT group_id FROM group_members WHERE user_id = ?')
+      .all(userId) as { group_id: string }[];
+    const allowedGroups = userGroups.map(g => g.group_id);
 
-      // Verify membership
-      const member = db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?')
-        .get(a.group_id, userId);
-      if (member) pending.push(a);
+    if (allowedGroups.length === 0) return reply.send({ approvals: [], count: 0 });
+
+    let query = "SELECT * FROM approvals WHERE status = 'pending'";
+    const params: string[] = [];
+
+    if (req.query.group_id) {
+      if (!allowedGroups.includes(req.query.group_id)) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
+      query += ' AND group_id = ?';
+      params.push(req.query.group_id);
+    } else {
+      query += ` AND group_id IN (${allowedGroups.map(() => '?').join(',')})`;
+      params.push(...allowedGroups);
     }
 
-    return reply.send({ approvals: pending, count: pending.length });
+    query += ' ORDER BY created_at ASC';
+    const approvals = db.prepare(query).all(...params);
+
+    return reply.send({ approvals, count: approvals.length });
   });
 
   // ─── Get Approval History ───
@@ -170,30 +147,40 @@ export function registerApprovalRoutes(app: FastifyInstance) {
     if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
 
     const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const history: any[] = [];
 
-    for (const [, a] of approvals) {
-      if (a.status === 'pending') continue;
-      if (req.query.group_id && a.group_id !== req.query.group_id) continue;
+    const userGroups = db.prepare('SELECT group_id FROM group_members WHERE user_id = ?')
+      .all(userId) as { group_id: string }[];
+    const allowedGroups = userGroups.map(g => g.group_id);
 
-      const member = db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?')
-        .get(a.group_id, userId);
-      if (member) history.push(a);
+    if (allowedGroups.length === 0) return reply.send({ approvals: [], count: 0 });
+
+    let query = "SELECT * FROM approvals WHERE status != 'pending'";
+    const params: string[] = [];
+
+    if (req.query.group_id) {
+      if (!allowedGroups.includes(req.query.group_id)) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
+      query += ' AND group_id = ?';
+      params.push(req.query.group_id);
+    } else {
+      query += ` AND group_id IN (${allowedGroups.map(() => '?').join(',')})`;
+      params.push(...allowedGroups);
     }
 
-    history.sort((a, b) => (b.resolved_at || '').localeCompare(a.resolved_at || ''));
-    return reply.send({ approvals: history.slice(0, limit), count: Math.min(history.length, limit) });
+    query += ' ORDER BY resolved_at DESC LIMIT ?';
+    params.push(String(limit));
+
+    const approvals = db.prepare(query).all(...params);
+
+    return reply.send({ approvals, count: approvals.length });
   });
 
   // ─── MCP Tool: Submit for Approval ───
-  // This is called by MCP agents when they want to do something risky
   app.post('/approval/mcp-submit', async (req: FastifyRequest<{ Body: {
     token: string;
     group_id: string;
     action: string;
     details?: string;
   } }>, reply) => {
-    // MCP agents authenticate via token in body (not header)
     const { verifyToken } = await import('../security/index.js');
     const config = await import('../../core/config.js').then(m => m.getConfig());
     const userId = verifyToken(req.body.token, config.session.secret, config.session.tokenTtlMs);
@@ -206,22 +193,12 @@ export function registerApprovalRoutes(app: FastifyInstance) {
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
     const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
-
     const approvalId = nanoid();
     const now = new Date().toISOString();
 
-    approvals.set(approvalId, {
-      id: approvalId,
-      group_id,
-      requester_id: userId,
-      requester_name: user.username,
-      action,
-      details: details || '',
-      status: 'pending',
-      created_at: now,
-    });
+    db.prepare('INSERT INTO approvals (id, group_id, requester_id, requester_name, action, details, status, created_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(approvalId, group_id, userId, user.username, action, details || '', 'pending', now);
 
-    // Notify group
     try {
       const { publishToGroup } = await import('../relay/index.js');
       publishToGroup(group_id, {
@@ -242,9 +219,20 @@ export function registerApprovalRoutes(app: FastifyInstance) {
 
 // ─── Check if approval is approved ───
 export function getApprovalStatus(approvalId: string): 'pending' | 'approved' | 'rejected' | null {
-  return approvals.get(approvalId)?.status || null;
+  try {
+    const db = getDb();
+    const row = db.prepare('SELECT status FROM approvals WHERE id = ?').get(approvalId) as { status: string } | undefined;
+    return (row?.status as any) || null;
+  } catch {
+    return null;
+  }
 }
 
 export function getApproval(approvalId: string) {
-  return approvals.get(approvalId) || null;
+  try {
+    const db = getDb();
+    return db.prepare('SELECT * FROM approvals WHERE id = ?').get(approvalId) || null;
+  } catch {
+    return null;
+  }
 }

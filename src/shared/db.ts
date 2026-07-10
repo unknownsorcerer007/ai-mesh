@@ -88,6 +88,68 @@ export function setupSchema() {
     CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
     CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
     CREATE INDEX IF NOT EXISTS idx_join_requests_group ON join_requests(group_id, status);
+
+    CREATE TABLE IF NOT EXISTS reactions (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      group_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      UNIQUE(message_id, emoji, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
+
+    CREATE TABLE IF NOT EXISTS threads (
+      id TEXT PRIMARY KEY,
+      group_id TEXT NOT NULL,
+      parent_message_id TEXT NOT NULL,
+      parent_content TEXT DEFAULT '',
+      parent_sender TEXT DEFAULT '',
+      reply_count INTEGER DEFAULT 0,
+      last_reply_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(parent_message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_threads_group ON threads(group_id);
+
+    CREATE TABLE IF NOT EXISTS approvals (
+      id TEXT PRIMARY KEY,
+      group_id TEXT NOT NULL,
+      requester_id TEXT NOT NULL,
+      requester_name TEXT NOT NULL,
+      action TEXT NOT NULL,
+      details TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+      resolved_at TEXT,
+      resolved_by TEXT,
+      reason TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (requester_id) REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_approvals_group ON approvals(group_id, status);
+    CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+
+    CREATE TABLE IF NOT EXISTS webhook_tokens (
+      token TEXT PRIMARY KEY,
+      group_id TEXT NOT NULL,
+      name TEXT DEFAULT 'webhook',
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_webhook_tokens_group ON webhook_tokens(group_id);
+
+    CREATE TABLE IF NOT EXISTS oauth_states (
+      state TEXT PRIMARY KEY,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS token_blacklist (
+      token TEXT PRIMARY KEY,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires ON token_blacklist(expires_at);
   `);
 
   return db;

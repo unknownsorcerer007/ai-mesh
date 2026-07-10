@@ -6,6 +6,6 @@ export { checkRateLimit, getRateLimitStatus } from './rate-limit.js';
 export { detectInjection, sanitizeMessage } from './injection.js';
 export {
   generateKeyPair, generateHashId, generateInviteCode,
-  generateToken, verifyToken, blacklistToken, isTokenBlacklisted,
+  generateToken, verifyToken, blacklistToken, isTokenBlacklisted, cleanupBlacklist,
   signMessage, verifySignature,
 } from './crypto.js';
