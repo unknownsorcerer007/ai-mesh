@@ -31,7 +31,8 @@
     "mcp": "node dist/mcp-server.js",
     "test": "vitest run",
     "lint": "eslint src/",
-    "db:setup": "tsx src/db/setup.ts"
+    "db:setup": "tsx src/db/setup.ts",
+    "postinstall": "node -e \"const fs=require('fs');const p='node_modules/@hono/node-server/dist/index.js';const m='node_modules/@hono/node-server/dist/index.mjs';if(fs.existsSync(p)&&!fs.existsSync(m))fs.copyFileSync(p,m);\""
   },
   "keywords": [
     "mcp",
@@ -46,6 +47,7 @@
     "@fastify/cors": "^11.0.1",
     "@fastify/session": "^11.0.2",
     "@fastify/websocket": "^11.3.0",
+    "@hono/node-server": "^2.0.8",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "arctic": "^3.6.0",
     "better-sqlite3": "^11.8.2",

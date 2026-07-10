@@ -97,7 +97,8 @@ export async function getPendingMessages(userId: string, groupId: string): Promi
 
   try {
     const consumer = await jetstream.consumers.get('MESH_MESSAGES', durable);
-    const fetched = await consumer.fetch({ max_messages: 100, expires: 3000 });
+    // Use short timeout for fast response
+    const fetched = await consumer.fetch({ max_messages: 100, expires: 500 });
 
     for await (const msg of fetched) {
       try {

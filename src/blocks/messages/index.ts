@@ -8,6 +8,7 @@ import { getDb } from '../../shared/db.js';
 import { registerHealthCheck, type BlockHealth } from '../../core/health.js';
 import { authenticate } from '../auth/index.js';
 import { detectInjection, sanitizeMessage, checkRateLimit } from '../security/index.js';
+import { getConfig } from '../../core/config.js';
 import { publishToGroup, subscribeToGroup, subscribeToUser, ensureConsumer, getPendingMessages, getAllPendingMessages } from '../relay/index.js';
 import { logMessage, logFullMessage } from '../logs/index.js';
 import { pushNotification } from '../notifications/index.js';
@@ -70,6 +71,7 @@ async function deliverToGroupMembers(groupId: string, msg: RelayMessage, exclude
 
 export function registerMessageRoutes(app: FastifyInstance) {
   const db = getDb();
+  const config = getConfig();
 
   // Health check
   registerHealthCheck('messages', async (): Promise<BlockHealth> => {
@@ -90,8 +92,13 @@ export function registerMessageRoutes(app: FastifyInstance) {
     const validTypes = ['text', 'code', 'alert', 'system'];
     if (type && !validTypes.includes(type)) return reply.code(400).send({ error: 'INVALID_TYPE' });
 
-    const rate = checkRateLimit(`msg:${userId}`, 60_000, 120);
-    if (!rate.allowed) return reply.code(429).send({ error: 'RATE_LIMITED' });
+    const rate = checkRateLimit(`msg:${userId}`, config.rateLimit.windowMs, config.rateLimit.maxRequests);
+    if (!rate.allowed) {
+      reply.header('X-RateLimit-Limit', config.rateLimit.maxRequests);
+      reply.header('X-RateLimit-Remaining', 0);
+      reply.header('Retry-After', Math.ceil(config.rateLimit.windowMs / 1000));
+      return reply.code(429).send({ error: 'RATE_LIMITED', retry_after: Math.ceil(config.rateLimit.windowMs / 1000) });
+    }
 
     const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?').get(group_id, userId);
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
@@ -109,24 +116,17 @@ export function registerMessageRoutes(app: FastifyInstance) {
       content: clean, metadata: metadata || undefined, timestamp: new Date().toISOString(),
     };
 
-    // Publish to NATS
-    try {
-      publishToGroup(group_id, relayMsg);
-    } catch (err) {
-      req.log.error({ err }, 'NATS publish failed');
-      return reply.code(502).send({ error: 'RELAY_UNAVAILABLE' });
-    }
+    // Publish to NATS (fire-and-forget for speed)
+    publishToGroup(group_id, relayMsg);
 
-    // Deliver to online users
-    const result = await deliverToGroupMembers(group_id, relayMsg, userId);
+    // Deliver to online users (fire-and-forget)
+    deliverToGroupMembers(group_id, relayMsg, userId).catch(() => {});
 
-    // Audit log (non-blocking)
-    try {
-      logMessage({ group_id, group_name: groupInfo?.name || group_id, sender: sender.username, sender_ai, type: type || 'text', content: clean, timestamp: relayMsg.timestamp });
-      logFullMessage({ group_id, group_name: groupInfo?.name || group_id, sender_id: userId, sender_username: sender.username, sender_ai, type: type || 'text', content: clean, metadata, timestamp: relayMsg.timestamp });
-    } catch { /* non-critical */ }
+    // Audit log (fire-and-forget)
+    logMessage({ group_id, group_name: groupInfo?.name || group_id, sender: sender.username, sender_ai, type: type || 'text', content: clean, timestamp: relayMsg.timestamp });
+    logFullMessage({ group_id, group_name: groupInfo?.name || group_id, sender_id: userId, sender_username: sender.username, sender_ai, type: type || 'text', content: clean, metadata, timestamp: relayMsg.timestamp });
 
-    return reply.send({ id: relayMsg.id, status: 'routed', delivered: result });
+    return reply.send({ id: relayMsg.id, status: 'routed' });
   });
 
   // ─── Inbox (flush JetStream pending) ───
