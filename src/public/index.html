@@ -586,12 +586,21 @@
         return;
       }
 
-      list.innerHTML = groups.map(g => `
-        <div class="group-item ${activeGroup === g.id ? 'active' : ''}" onclick="selectGroup('${g.id}', '${g.name}')">
-          <div class="name">${g.name}</div>
-          <div class="meta">${g.member_count} members · ${g.group_type}</div>
-        </div>
-      `).join('');
+      list.innerHTML = '';
+      groups.forEach(g => {
+        const item = document.createElement('div');
+        item.className = 'group-item' + (activeGroup === g.id ? ' active' : '');
+        item.onclick = () => selectGroup(g.id, g.name);
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = g.name;
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = g.member_count + ' members · ' + g.group_type;
+        item.appendChild(name);
+        item.appendChild(meta);
+        list.appendChild(item);
+      });
     }
 
     async function selectGroup(id, name) {
@@ -666,18 +675,40 @@
         }
       };
 
-      ws.onclose = () => setTimeout(connectWS, 5000);
+      ws.onclose = (event) => {
+        // Don't reconnect on auth failure
+        if (event.code === 4003) {
+          token = null;
+          localStorage.removeItem('pulse_token');
+          location.reload();
+          return;
+        }
+        setTimeout(connectWS, 5000);
+      };
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
     }
 
     function appendMessage(msg) {
       const container = document.getElementById('chatMessages');
       const div = document.createElement('div');
       div.className = 'message' + (msg.sender_username === username ? ' own' : '');
-      div.innerHTML = `
-        <div class="sender">${msg.sender_ai || msg.sender_username}</div>
-        <div class="content">${msg.content}</div>
-        <div class="time">${new Date(msg.timestamp).toLocaleTimeString()}</div>
-      `;
+      const sender = document.createElement('div');
+      sender.className = 'sender';
+      sender.textContent = msg.sender_ai || msg.sender_username;
+      const content = document.createElement('div');
+      content.className = 'content';
+      content.textContent = msg.content;
+      const time = document.createElement('div');
+      time.className = 'time';
+      time.textContent = new Date(msg.timestamp).toLocaleTimeString();
+      div.appendChild(sender);
+      div.appendChild(content);
+      div.appendChild(time);
       container.appendChild(div);
       container.scrollTop = container.scrollHeight;
     }

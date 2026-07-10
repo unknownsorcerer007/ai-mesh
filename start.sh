@@ -7,7 +7,6 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Colors
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -26,6 +25,18 @@ fi
 # Create data directory
 mkdir -p data
 
+# Cleanup on exit
+cleanup() {
+  echo -e "\n${YELLOW}Shutting down...${NC}"
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
+  [ -n "$NATS_PID" ] && kill "$NATS_PID" 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo -e "${GREEN}✅ Shutdown complete${NC}"
+  exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
 # Start NATS
 echo -e "${GREEN}📡 Starting NATS relay...${NC}"
 ./nats-server -js -p 4222 -sd ./data/nats &
@@ -43,21 +54,11 @@ echo -e "${GREEN}🤖 Starting AI Mesh server...${NC}"
 node dist/index.js &
 SERVER_PID=$!
 
-# Trap signals for graceful shutdown
-cleanup() {
-  echo -e "\n${YELLOW}Shutting down...${NC}"
-  kill $SERVER_PID 2>/dev/null
-  kill $NATS_PID 2>/dev/null
-  wait 2>/dev/null
-  echo -e "${GREEN}✅ Shutdown complete${NC}"
-  exit 0
-}
-
-trap cleanup SIGINT SIGTERM
-
 echo -e "${GREEN}✅ AI Mesh is running!${NC}"
 echo -e "   Server:  http://localhost:${PORT:-3737}"
 echo -e "   NATS:    nats://localhost:4222"
 echo -e "   Press Ctrl+C to stop"
 
-wait
+# Wait for either process to exit
+wait -n "$NATS_PID" "$SERVER_PID" 2>/dev/null || true
+cleanup
