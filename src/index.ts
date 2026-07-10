@@ -48,14 +48,23 @@ async function main() {
 
   // ─── Plugins ───
   await app.register(cors, {
-    origin: config.server.corsOrigin.length > 0 ? config.server.corsOrigin : true,
+    origin: config.server.corsOrigin.length > 0 ? config.server.corsOrigin : (config.server.nodeEnv === 'production' ? ['https://' + (process.env.RAILWAY_PUBLIC_DOMAIN || 'localhost')] : true),
     credentials: true,
-    maxAge: 86400, // Fix: Cache preflight for 24 hours
+    maxAge: 86400,
   });
   await app.register(websocket);
 
   // Fix: Content-Type validation for POST/PUT
   app.addHook('preHandler', async (req, reply) => {
+    // Security headers
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('X-XSS-Protection', '1; mode=block');
+    reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    if (config.server.nodeEnv === 'production') {
+      reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+
     if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
       const contentType = req.headers['content-type'];
       if (contentType && !contentType.includes('application/json') && !contentType.includes('multipart/form-data')) {
