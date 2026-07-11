@@ -59,7 +59,6 @@ async function main() {
     // Security headers
     reply.header('X-Frame-Options', 'DENY');
     reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('X-XSS-Protection', '1; mode=block');
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
     if (config.server.nodeEnv === 'production') {
       reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -68,7 +67,7 @@ async function main() {
     if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
       const contentType = req.headers['content-type'];
       if (contentType && !contentType.includes('application/json') && !contentType.includes('multipart/form-data')) {
-        reply.code(415).send({ error: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type must be application/json' });
+        return reply.code(415).send({ error: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type must be application/json' });
       }
     }
   });

@@ -1038,13 +1038,14 @@
     // ═══════════════════════════════════════
     //  INIT
     // ═══════════════════════════════════════
-    const urlParams = new URLSearchParams(window.location.search);
-    const cbToken = urlParams.get('token');
-    const cbUser = urlParams.get('username');
+    // Read token from hash fragment (never sent to server)
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const cbToken = hashParams.get('token');
+    const cbUser = hashParams.get('username');
     if (cbToken) {
       token = cbToken;
       localStorage.setItem('mesh_token', token);
-      if (cbUser) { username = cbUser; localStorage.setItem('mesh_username', username); }
+      if (cbUser) { username = decodeURIComponent(cbUser); localStorage.setItem('mesh_username', username); }
       window.history.replaceState({}, '', '/');
     }
 

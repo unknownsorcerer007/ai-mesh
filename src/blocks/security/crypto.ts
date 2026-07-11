@@ -3,6 +3,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import nacl from 'tweetnacl';
+import { getDb } from '../../shared/db.js';
 
 // ─── Key Pair ───
 export function generateKeyPair(): { publicKey: string; secretKey: string } {
@@ -87,7 +88,6 @@ export function verifyToken(token: string, secret: string, ttlMs: number = 7 * 2
 // ─── Token Blacklist (SQLite-backed) ───
 export function blacklistToken(token: string, ttlMs: number = 7 * 24 * 60 * 60 * 1000) {
   try {
-    const { getDb } = require('../../shared/db.js');
     const db = getDb();
     const expiresAt = Date.now() + ttlMs;
     db.prepare('INSERT OR IGNORE INTO token_blacklist (token, expires_at) VALUES (?, ?)').run(token, expiresAt);
@@ -96,7 +96,6 @@ export function blacklistToken(token: string, ttlMs: number = 7 * 24 * 60 * 60 *
 
 export function isTokenBlacklisted(token: string): boolean {
   try {
-    const { getDb } = require('../../shared/db.js');
     const db = getDb();
     const row = db.prepare('SELECT 1 FROM token_blacklist WHERE token = ? AND expires_at > ?').get(token, Date.now());
     return !!row;
@@ -108,7 +107,6 @@ export function isTokenBlacklisted(token: string): boolean {
 // Cleanup expired blacklist entries
 export function cleanupBlacklist() {
   try {
-    const { getDb } = require('../../shared/db.js');
     const db = getDb();
     db.prepare('DELETE FROM token_blacklist WHERE expires_at <= ?').run(Date.now());
   } catch { /* db may not be ready */ }

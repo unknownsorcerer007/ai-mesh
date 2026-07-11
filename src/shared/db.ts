@@ -134,6 +134,7 @@ export function setupSchema() {
     CREATE TABLE IF NOT EXISTS webhook_tokens (
       token TEXT PRIMARY KEY,
       group_id TEXT NOT NULL,
+      secret TEXT NOT NULL DEFAULT '',
       name TEXT DEFAULT 'webhook',
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE

@@ -2,7 +2,6 @@
 // Desktop notifications, terminal popups, webhook callbacks
 // Independent — no dependencies on other blocks
 
-import { execFileSync } from 'node:child_process';
 import { registerHealthCheck } from '../../core/health.js';
 import { showTerminalPopup, showDesktopNotification } from './popup.js';
 

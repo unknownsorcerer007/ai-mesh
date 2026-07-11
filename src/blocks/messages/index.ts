@@ -292,12 +292,6 @@ export function registerMessageRoutes(app: FastifyInstance) {
     });
   }
 
-  // ─── Purge ───
-  app.post('/messages/purge', async (req, reply) => {
-    const userId = authenticate(req);
-    if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
-    return reply.send({ status: 'ok' });
-  });
 }
 
 // ─── Helpers ───

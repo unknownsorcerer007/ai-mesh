@@ -138,7 +138,7 @@ export function registerGroupRoutes(app: FastifyInstance) {
       return reply.send({ status: 'approved' });
     } else {
       db.prepare("UPDATE join_requests SET status = 'rejected' WHERE id = ?").run(request_id);
-      notifyUser(joinReq.user_id, { type: 'member_joined', payload: { group_id: joinReq.group_id, status: 'rejected' }, timestamp: new Date().toISOString() });
+      notifyUser(joinReq.user_id, { type: 'join_rejected', payload: { group_id: joinReq.group_id, status: 'rejected' }, timestamp: new Date().toISOString() });
       return reply.send({ status: 'rejected' });
     }
   });

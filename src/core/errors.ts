@@ -88,22 +88,20 @@ export function registerErrorHandler(app: FastifyInstance) {
   app.setErrorHandler((error: Error & { statusCode?: number; validation?: unknown }, _request, reply) => {
     // Known app error
     if (error instanceof AppError) {
-      reply.code(error.statusCode).send(error.toJSON());
-      return;
+      return reply.code(error.statusCode).send(error.toJSON());
     }
 
     // Fastify validation error
     if ('validation' in error) {
-      reply.code(400).send({
+      return reply.code(400).send({
         error: 'VALIDATION_ERROR',
         message: error.message,
       });
-      return;
     }
 
     // Unknown error — don't leak internals in production
     const statusCode = error.statusCode || 500;
-    reply.code(statusCode).send({
+    return reply.code(statusCode).send({
       error: 'INTERNAL_ERROR',
       message: statusCode >= 500 && process.env.NODE_ENV === 'production'
         ? 'Internal server error'

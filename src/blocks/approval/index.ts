@@ -33,10 +33,11 @@ export function registerApprovalRoutes(app: FastifyInstance) {
     const { group_id, action, details } = req.body;
     if (!group_id || !action) return reply.code(400).send({ error: 'GROUP_ID_AND_ACTION_REQUIRED' });
 
-    const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?').get(group_id, userId) as any;
+    const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?').get(group_id, userId) as { role: string } | undefined;
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
-    const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+    const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string } | undefined;
+    if (!user) return reply.code(404).send({ error: 'USER_NOT_FOUND' });
     const approvalId = nanoid();
     const now = new Date().toISOString();
 
@@ -76,14 +77,15 @@ export function registerApprovalRoutes(app: FastifyInstance) {
     const { approval_id, approve, reason } = req.body;
     if (!approval_id) return reply.code(400).send({ error: 'APPROVAL_ID_REQUIRED' });
 
-    const approval = db.prepare('SELECT * FROM approvals WHERE id = ? AND status = ?').get(approval_id, 'pending') as any;
+    const approval = db.prepare('SELECT * FROM approvals WHERE id = ? AND status = ?').get(approval_id, 'pending') as { group_id: string; action: string; requester_name: string } | undefined;
     if (!approval) return reply.code(404).send({ error: 'APPROVAL_NOT_FOUND' });
 
     const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?')
-      .get(approval.group_id, userId) as any;
+      .get(approval.group_id, userId) as { role: string } | undefined;
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
-    const responder = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+    const responder = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string } | undefined;
+    if (!responder) return reply.code(404).send({ error: 'USER_NOT_FOUND' });
     const now = new Date().toISOString();
 
     db.prepare("UPDATE approvals SET status = ?, resolved_at = ?, resolved_by = ?, reason = ? WHERE id = ?")
@@ -189,10 +191,11 @@ export function registerApprovalRoutes(app: FastifyInstance) {
     const { group_id, action, details } = req.body;
     if (!group_id || !action) return reply.code(400).send({ error: 'GROUP_ID_AND_ACTION_REQUIRED' });
 
-    const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?').get(group_id, userId) as any;
+    const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?').get(group_id, userId) as { role: string } | undefined;
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
-    const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+    const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string } | undefined;
+    if (!user) return reply.code(404).send({ error: 'USER_NOT_FOUND' });
     const approvalId = nanoid();
     const now = new Date().toISOString();
 

@@ -43,7 +43,7 @@ export function registerThreadingRoutes(app: FastifyInstance) {
     const now = new Date().toISOString();
 
     // Upsert thread metadata
-    const existing = db.prepare('SELECT * FROM threads WHERE parent_message_id = ?').get(parent_message_id) as any;
+    const existing = db.prepare('SELECT * FROM threads WHERE parent_message_id = ?').get(parent_message_id) as { id: string; reply_count: number } | undefined;
     if (existing) {
       db.prepare("UPDATE threads SET reply_count = reply_count + 1, last_reply_at = ? WHERE parent_message_id = ?")
         .run(now, parent_message_id);
@@ -52,7 +52,7 @@ export function registerThreadingRoutes(app: FastifyInstance) {
         .run(nanoid(), group_id, parent_message_id, 1, now);
     }
 
-    const thread = db.prepare('SELECT * FROM threads WHERE parent_message_id = ?').get(parent_message_id) as any;
+    const thread = db.prepare('SELECT * FROM threads WHERE parent_message_id = ?').get(parent_message_id) as { id: string; reply_count: number; last_reply_at: string };
 
     const msgId = nanoid();
     const relayMsg: RelayMessage = {

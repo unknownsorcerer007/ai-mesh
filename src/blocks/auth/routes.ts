@@ -50,8 +50,10 @@ export function registerAuthRoutes(app: FastifyInstance) {
   const config = getConfig();
   const db = getDb();
 
-  // Cleanup expired OAuth states on startup
+  // Cleanup expired OAuth states on startup + periodically
   cleanupExpiredOAuthStates();
+  const oauthCleanupTimer = setInterval(cleanupExpiredOAuthStates, 600_000); // every 10 min
+  oauthCleanupTimer.unref();
 
   // Health check
   registerHealthCheck('auth', async (): Promise<BlockHealth> => {
@@ -98,6 +100,7 @@ export function registerAuthRoutes(app: FastifyInstance) {
 
       let user = db.prepare('SELECT * FROM users WHERE github_id = ?').get(String(ghUser.id)) as User | undefined;
 
+
       if (!user) {
         let username = ghUser.login;
         const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
@@ -115,8 +118,8 @@ export function registerAuthRoutes(app: FastifyInstance) {
 
       const token = generateToken(user.id, config.session.secret, config.session.tokenTtlMs);
       const uiUrl = new URL('/', `${req.protocol}://${req.hostname}`);
-      uiUrl.searchParams.set('token', token);
-      uiUrl.searchParams.set('username', user.username);
+      // Token in hash fragment — never sent to server, not in access logs
+      uiUrl.hash = `token=${token}&username=${encodeURIComponent(user.username)}`;
       return reply.redirect(uiUrl.toString());
     } catch (err: any) {
       return reply.code(500).send({ error: 'OAUTH_FAILED', message: err.message });
@@ -137,7 +140,8 @@ export function registerAuthRoutes(app: FastifyInstance) {
     }
 
     // Fix: Use DB UNIQUE constraint to prevent race condition (TOCTOU)
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as User;
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as User | undefined;
+    if (!user) return reply.code(404).send({ error: 'USER_NOT_FOUND' });
     const newHash = generateHashId(username, user.public_key);
 
     try {

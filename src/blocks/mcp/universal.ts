@@ -12,26 +12,26 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { getDb } from '../../shared/db.js';
+import { getConfig } from '../../core/config.js';
 import { detectInjection, sanitizeMessage, checkRateLimit, generateInviteCode, verifyToken } from '../security/index.js';
 import { toHuman, translateType } from '../../shared/translate.js';
 import { publishToGroup, getPendingMessages, getAllPendingMessages, ensureConsumer } from '../relay/index.js';
 import { logMessage } from '../logs/index.js';
 import { saveMessage, saveMessages, readMessages, getLocalGroups, getStorageStats, clearGroup, type StoredMessage } from './local-store.js';
 import { nanoid } from 'nanoid';
-import type { Group } from '../../shared/types.js';
+import type { Group, RelayMessage } from '../../shared/types.js';
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
-
-// ─── Auth context ───
-let currentUserId: string | null = null;
-
-export function setCurrentUser(userId: string) {
-  currentUserId = userId;
-}
-
-function requireUser(): string {
-  if (!currentUserId) throw new Error('Not authenticated. Call connect first.');
-  return currentUserId;
+// ─── Per-server auth context (not global — safe for concurrent HTTP connections) ───
+function createAuthContext() {
+  let currentUserId: string | null = null;
+  return {
+    get userId() { return currentUserId; },
+    set(userId: string) { currentUserId = userId; },
+    require(): string {
+      if (!currentUserId) throw new Error('Not authenticated. Call connect first.');
+      return currentUserId;
+    },
+  };
 }
 
 function isGroupMember(userId: string, groupId: string): boolean {
@@ -65,14 +65,16 @@ export function createMcpServer(): McpServer {
     name: 'ai-mesh',
     version: '1.0.0',
   });
+  const auth = createAuthContext();
 
   // ─── connect ───
   server.tool('connect', 'Authenticate with AI Mesh', {
     token: z.string().describe('Your auth token'),
   }, async ({ token }) => {
-    const userId = verifyToken(token, SESSION_SECRET);
+    const config = getConfig();
+    const userId = verifyToken(token, config.session.secret, config.session.tokenTtlMs);
     if (!userId) return { content: [{ type: 'text', text: '❌ Invalid token' }], isError: true };
-    currentUserId = userId;
+    auth.set(userId);
     const user = getDb().prepare('SELECT username, hash_id FROM users WHERE id = ?').get(userId) as { username: string; hash_id: string } | undefined;
     if (!user) return { content: [{ type: 'text', text: '❌ User not found' }], isError: true };
 
@@ -88,7 +90,7 @@ export function createMcpServer(): McpServer {
     type: z.enum(['text', 'code', 'alert', 'system']).optional().default('text'),
     metadata: z.record(z.unknown()).optional().describe('Extra metadata'),
   }, async ({ group_id, message, type, metadata }) => {
-    const userId = requireUser();
+    const userId = auth.require();
     if (!isGroupMember(userId, group_id)) return { content: [{ type: 'text', text: '❌ Not a member' }], isError: true };
 
     const rate = checkRateLimit(`mcp:msg:${userId}`, 60_000, 120);
@@ -104,7 +106,8 @@ export function createMcpServer(): McpServer {
 
     const relayMsg = {
       id: msgId, group_id, sender_id: userId, sender_username: sender.username,
-      type, content: clean, metadata: metadata as Record<string, unknown> | undefined, timestamp: now,
+      sender_ai: 'mcp-agent', type, content: clean,
+      metadata: metadata as Record<string, unknown> | undefined, timestamp: now,
     };
 
     // Publish via NATS relay — server stores nothing
@@ -131,7 +134,7 @@ export function createMcpServer(): McpServer {
     group_id: z.string().optional().describe('Filter by group'),
     limit: z.number().max(200).optional().default(50),
   }, async ({ group_id, limit }) => {
-    const userId = requireUser();
+    const userId = auth.require();
 
     // Get user's groups
     const groups = getDb().prepare('SELECT group_id FROM group_members WHERE user_id = ?')
@@ -184,7 +187,7 @@ export function createMcpServer(): McpServer {
     limit: z.number().max(500).optional().default(50),
     before: z.string().optional().describe('ISO timestamp — get messages before this time'),
   }, async ({ group_id, limit, before }) => {
-    const userId = requireUser();
+    const userId = auth.require();
     if (!isGroupMember(userId, group_id)) {
       return { content: [{ type: 'text', text: '❌ Not a member' }], isError: true };
     }
@@ -202,7 +205,7 @@ export function createMcpServer(): McpServer {
 
   // ─── local_storage_stats ───
   server.tool('local_storage_stats', 'View local message storage stats.', {}, async () => {
-    requireUser();
+    auth.require();
     const stats = getStorageStats();
     const groups = getLocalGroups();
 
@@ -218,7 +221,7 @@ export function createMcpServer(): McpServer {
   server.tool('clear_local_messages', 'Delete local messages for a group.', {
     group_id: z.string(),
   }, async ({ group_id }) => {
-    requireUser();
+    auth.require();
     const cleared = clearGroup(group_id);
     return { content: [{ type: 'text', text: cleared ? `✅ Local messages cleared for group ${group_id}` : 'No local messages found.' }] };
   });
@@ -229,7 +232,7 @@ export function createMcpServer(): McpServer {
     description: z.string().optional(),
     group_type: z.enum(['team', 'project', 'open']).optional().default('team'),
   }, async ({ name, description, group_type }) => {
-    const userId = requireUser();
+    const userId = auth.require();
     const rate = checkRateLimit(`mcp:group:${userId}`, 3600_000, 10);
     if (!rate.allowed) return { content: [{ type: 'text', text: '❌ Rate limit: too many groups' }], isError: true };
 
@@ -248,7 +251,7 @@ export function createMcpServer(): McpServer {
   server.tool('join_group', 'Request to join a group via invite code', {
     invite_code: z.string(),
   }, async ({ invite_code }) => {
-    const userId = requireUser();
+    const userId = auth.require();
     const group = getDb().prepare('SELECT * FROM groups WHERE invite_code = ?').get(invite_code) as Group | undefined;
     if (!group) return { content: [{ type: 'text', text: '❌ Invalid invite code' }], isError: true };
 
@@ -270,8 +273,8 @@ export function createMcpServer(): McpServer {
     request_id: z.string(),
     approve: z.boolean(),
   }, async ({ request_id, approve }) => {
-    const userId = requireUser();
-    const joinReq = getDb().prepare('SELECT * FROM join_requests WHERE id = ?').get(request_id) as any;
+    const userId = auth.require();
+    const joinReq = getDb().prepare('SELECT * FROM join_requests WHERE id = ?').get(request_id) as { group_id: string; user_id: string; status: string } | undefined;
     if (!joinReq || joinReq.status !== 'pending') return { content: [{ type: 'text', text: '❌ Not found' }], isError: true };
 
     const group = getDb().prepare('SELECT * FROM groups WHERE id = ?').get(joinReq.group_id) as Group;
@@ -289,7 +292,7 @@ export function createMcpServer(): McpServer {
 
   // ─── list_groups ───
   server.tool('list_groups', 'List your groups', {}, async () => {
-    const userId = requireUser();
+    const userId = auth.require();
     const groups = getDb().prepare(`
       SELECT g.*, gm.role, (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
       FROM groups g JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = ?
@@ -302,14 +305,14 @@ export function createMcpServer(): McpServer {
     group_id: z.string(),
     limit: z.number().max(500).optional().default(50),
   }, async ({ group_id, limit }) => {
-    const userId = requireUser();
+    const userId = auth.require();
     if (!isGroupMember(userId, group_id)) return { content: [{ type: 'text', text: '❌ Not a member' }], isError: true };
 
     // 1. Read from local storage first
     const localMessages = readMessages(group_id, limit);
 
     // 2. Also try to fetch pending from relay
-    let relayMessages: any[] = [];
+    let relayMessages: RelayMessage[] = [];
     try {
       await ensureConsumer(group_id, userId);
       relayMessages = await getPendingMessages(userId, group_id);
@@ -343,6 +346,7 @@ export function createMcpServer(): McpServer {
     message: z.string(),
     target_lang: z.enum(['en', 'hi']).optional().default('en'),
   }, async ({ message, target_lang }) => {
+    auth.require();
     const translated = toHuman(message, 'AI Agent');
     const typeLabel = translateType(
       (() => { try { return JSON.parse(message).type; } catch { return 'text'; } })(),
@@ -353,7 +357,7 @@ export function createMcpServer(): McpServer {
 
   // ─── get_pending_requests ───
   server.tool('get_pending_requests', 'Get pending join requests (admin)', {}, async () => {
-    const userId = requireUser();
+    const userId = auth.require();
     const requests = getDb().prepare(`
       SELECT jr.*, g.name as group_name, u.username, u.hash_id
       FROM join_requests jr JOIN groups g ON g.id = jr.group_id JOIN users u ON u.id = jr.user_id
@@ -367,7 +371,7 @@ export function createMcpServer(): McpServer {
   server.tool('leave_group', 'Leave a group', {
     group_id: z.string(),
   }, async ({ group_id }) => {
-    const userId = requireUser();
+    const userId = auth.require();
     const group = getDb().prepare('SELECT * FROM groups WHERE id = ?').get(group_id) as Group | undefined;
     if (!group) return { content: [{ type: 'text', text: '❌ Not found' }], isError: true };
     if (group.admin_id === userId) return { content: [{ type: 'text', text: '❌ Admin cannot leave' }], isError: true };
@@ -386,10 +390,8 @@ export async function startStdio() {
   process.stderr.write('[mcp] AI Mesh MCP (stdio) running\n');
 }
 
-// ─── Start: HTTP/SSE mode ───
+// ─── Start: HTTP/SSE mode (per-connection server instances for isolation) ───
 export async function startHttp(port: number = 3738) {
-  const mcpServer = createMcpServer();
-
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || '', `http://localhost:${port}`);
 
@@ -411,6 +413,8 @@ export async function startHttp(port: number = 3738) {
     }
 
     if (url.pathname === '/mcp') {
+      // ponytail: new server per connection — isolates auth context
+      const mcpServer = createMcpServer();
       try {
         if (req.method === 'GET') {
           const transport = new SSEServerTransport('/mcp', res);

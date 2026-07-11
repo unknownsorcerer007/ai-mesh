@@ -2,7 +2,10 @@
 // Monthly log files, downloadable via API
 // No message content in DB — only file-based logs
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { appendFile, readFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { promisify } from 'node:util';
+
+const appendFileAsync = promisify(appendFile);
 import { resolve } from 'node:path';
 import { registerHealthCheck, type BlockHealth } from '../../core/health.js';
 import { authenticate } from '../auth/index.js';
@@ -50,7 +53,7 @@ export function logMessage(params: {
   if (!checkLogSize(logFile)) return;
 
   const line = `[${params.timestamp}] [group:${params.group_name}] [${params.sender_ai ? `ai:${params.sender_ai}` : `user:${params.sender}`}] [${params.type}] ${params.content}\n`;
-  appendFileSync(logFile, line);
+  appendFileAsync(logFile, line).catch(() => {});
 }
 
 export function logFullMessage(params: {
@@ -64,7 +67,7 @@ export function logFullMessage(params: {
   // Fix: Skip if file too large
   if (!checkLogSize(logFile)) return;
 
-  appendFileSync(logFile, JSON.stringify({ ...params, logged_at: new Date().toISOString() }) + '\n');
+  appendFileAsync(logFile, JSON.stringify({ ...params, logged_at: new Date().toISOString() }) + '\n').catch(() => {});
 }
 
 export function registerLogRoutes(app: any) {

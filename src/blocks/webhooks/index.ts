@@ -5,6 +5,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { nanoid } from 'nanoid';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { getDb } from '../../shared/db.js';
 import { registerHealthCheck, type BlockHealth } from '../../core/health.js';
 import type { RelayMessage } from '../../shared/types.js';
@@ -157,11 +158,13 @@ export function registerWebhookRoutes(app: FastifyInstance) {
     if (!group || group.admin_id !== userId) return reply.code(403).send({ error: 'ADMIN_ONLY' });
 
     const token = nanoid(32);
-    db.prepare('INSERT INTO webhook_tokens (token, group_id, name) VALUES (?,?,?)')
-      .run(token, group_id, name || 'webhook');
+    const secret = nanoid(32);
+    db.prepare('INSERT INTO webhook_tokens (token, group_id, secret, name) VALUES (?,?,?,?)')
+      .run(token, group_id, secret, name || 'webhook');
 
     return reply.send({
       token,
+      secret,
       group_id,
       name: name || 'webhook',
       url: `/webhook/${token}`,
@@ -178,7 +181,7 @@ export function registerWebhookRoutes(app: FastifyInstance) {
     if (!group || group.admin_id !== userId) return reply.code(403).send({ error: 'ADMIN_ONLY' });
 
     const rows = db.prepare('SELECT token, name, created_at FROM webhook_tokens WHERE group_id = ?')
-      .all(req.params.groupId) as any[];
+      .all(req.params.groupId) as { token: string; name: string; created_at: string }[];
 
     const tokens = rows.map(r => ({
       token: r.token.slice(0, 8) + '...',
@@ -205,10 +208,10 @@ export function registerWebhookRoutes(app: FastifyInstance) {
     return reply.send({ status: 'deleted' });
   });
 
-  // ─── Receive Webhook (public endpoint — no auth, token-based) ───
+  // ─── Receive Webhook (public endpoint — no auth, token-based + signature verify) ───
   app.post('/webhook/:token', async (req: FastifyRequest<{ Params: { token: string }; Body: unknown }>, reply) => {
-    const info = db.prepare('SELECT group_id, name FROM webhook_tokens WHERE token = ?')
-      .get(req.params.token) as { group_id: string; name: string } | undefined;
+    const info = db.prepare('SELECT group_id, name, secret FROM webhook_tokens WHERE token = ?')
+      .get(req.params.token) as { group_id: string; name: string; secret: string } | undefined;
     if (!info) return reply.code(404).send({ error: 'INVALID_WEBHOOK_TOKEN' });
 
     const { checkRateLimit } = await import('../security/index.js');
@@ -218,6 +221,26 @@ export function registerWebhookRoutes(app: FastifyInstance) {
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
       if (typeof value === 'string') headers[key.toLowerCase()] = value;
+    }
+
+    // Verify webhook signature (GitHub: X-Hub-Signature-256, GitLab: X-Gitlab-Token)
+    if (info.secret) {
+      const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+      const githubSig = headers['x-hub-signature-256'];
+      const gitlabToken = headers['x-gitlab-token'];
+
+      if (githubSig) {
+        const expected = 'sha256=' + createHmac('sha256', info.secret).update(rawBody).digest('hex');
+        if (githubSig.length !== expected.length ||
+            !timingSafeEqual(Buffer.from(githubSig), Buffer.from(expected))) {
+          return reply.code(401).send({ error: 'INVALID_SIGNATURE' });
+        }
+      } else if (gitlabToken) {
+        if (!timingSafeEqual(Buffer.from(gitlabToken), Buffer.from(info.secret))) {
+          return reply.code(401).send({ error: 'INVALID_SIGNATURE' });
+        }
+      }
+      // ponytail: if neither header present, allow (backward compat with generic webhooks)
     }
 
     let parsed: ParsedWebhook | null = null;
