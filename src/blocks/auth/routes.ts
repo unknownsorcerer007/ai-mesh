@@ -176,4 +176,45 @@ export function registerAuthRoutes(app: FastifyInstance) {
     }
     return reply.send({ status: 'logged_out' });
   });
+
+  // ─── Login with GitHub PAT (no OAuth flow needed) ───
+  app.post('/auth/pat', async (req: FastifyRequest<{ Body: { pat: string } }>, reply) => {
+    const { pat } = req.body;
+    if (!pat || !pat.startsWith('ghp_')) {
+      return reply.code(400).send({ error: 'INVALID_PAT', message: 'Provide a valid GitHub Personal Access Token (ghp_...)' });
+    }
+
+    try {
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: { Authorization: `Bearer ${pat}`, 'User-Agent': 'ai-mesh' },
+      });
+      const ghUser = await userRes.json() as { id: number; login: string };
+
+      if (!ghUser.id || !ghUser.login) {
+        return reply.code(401).send({ error: 'INVALID_PAT', message: 'GitHub PAT is invalid or expired' });
+      }
+
+      let user = db.prepare('SELECT * FROM users WHERE github_id = ?').get(String(ghUser.id)) as User | undefined;
+
+      if (!user) {
+        let username = ghUser.login;
+        const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+        if (existing) username = `${ghUser.login}_${nanoid(6)}`;
+
+        const newId = nanoid();
+        const { publicKey } = generateKeyPair();
+        const hashId = generateHashId(username, publicKey);
+
+        db.prepare('INSERT INTO users (id, username, hash_id, public_key, github_id, github_username) VALUES (?,?,?,?,?,?)')
+          .run(newId, username, hashId, publicKey, String(ghUser.id), ghUser.login);
+
+        user = db.prepare('SELECT * FROM users WHERE id = ?').get(newId) as User;
+      }
+
+      const token = generateToken(user.id, config.session.secret, config.session.tokenTtlMs);
+      return reply.send({ token, username: user.username, user_id: user.id });
+    } catch (err: any) {
+      return reply.code(500).send({ error: 'PAT_LOGIN_FAILED', message: err.message });
+    }
+  });
 }
