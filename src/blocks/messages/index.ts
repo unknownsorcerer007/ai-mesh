@@ -159,9 +159,13 @@ export function registerMessageRoutes(app: FastifyInstance) {
     const member = db.prepare('SELECT * FROM group_members WHERE group_id = ? AND user_id = ?').get(req.params.groupId, userId);
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
-    await ensureConsumer(req.params.groupId, userId);
-    const messages = await getPendingMessages(userId, req.params.groupId);
-    return reply.send({ messages, count: messages.length });
+    try {
+      await ensureConsumer(req.params.groupId, userId);
+      const messages = await getPendingMessages(userId, req.params.groupId);
+      return reply.send({ messages, count: messages.length });
+    } catch {
+      return reply.send({ messages: [], count: 0, note: 'Relay unavailable — no pending messages' });
+    }
   });
 
   // ─── WebSocket (first-message auth — no token in URL) ───
