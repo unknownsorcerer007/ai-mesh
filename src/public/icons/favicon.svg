@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <!-- Mesh nodes -->
+  <circle cx="10" cy="10" r="2.5" fill="white" opacity="0.95"/>
+  <circle cx="22" cy="10" r="2.5" fill="white" opacity="0.95"/>
+  <circle cx="16" cy="22" r="2.5" fill="white" opacity="0.95"/>
+  <circle cx="8" cy="20" r="1.8" fill="white" opacity="0.6"/>
+  <circle cx="24" cy="20" r="1.8" fill="white" opacity="0.6"/>
+  <!-- Mesh connections -->
+  <line x1="10" y1="10" x2="22" y2="10" stroke="white" stroke-width="1.2" opacity="0.4"/>
+  <line x1="10" y1="10" x2="16" y2="22" stroke="white" stroke-width="1.2" opacity="0.4"/>
+  <line x1="22" y1="10" x2="16" y2="22" stroke="white" stroke-width="1.2" opacity="0.4"/>
+  <line x1="8" y1="20" x2="10" y2="10" stroke="white" stroke-width="1" opacity="0.3"/>
+  <line x1="24" y1="20" x2="22" y2="10" stroke="white" stroke-width="1" opacity="0.3"/>
+  <line x1="8" y1="20" x2="16" y2="22" stroke="white" stroke-width="1" opacity="0.3"/>
+  <line x1="24" y1="20" x2="16" y2="22" stroke="white" stroke-width="1" opacity="0.3"/>
+  <!-- Center pulse -->
+  <circle cx="16" cy="15" r="1.5" fill="white" opacity="0.8"/>
+</svg>
