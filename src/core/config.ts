@@ -31,6 +31,7 @@ export interface AppConfig {
   messages: {
     maxHoldAge: number;
     maxHoldPerUser: number;
+    maxBytes: number;
   };
 }
 
@@ -92,6 +93,7 @@ export function getConfig(): AppConfig {
     messages: {
       maxHoldAge: envInt('MESSAGE_HOLD_MS', 7 * 24 * 60 * 60 * 1000), // 7 days
       maxHoldPerUser: envInt('MESSAGE_HOLD_MAX', 500),
+      maxBytes: envInt('MESSAGE_MAX_BYTES', 16384), // 16KB
     },
   };
 

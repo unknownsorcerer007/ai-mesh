@@ -34,6 +34,9 @@
     "db:setup": "tsx src/db/setup.ts",
     "postinstall": "echo ok"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "keywords": [
     "mcp",
     "ai",

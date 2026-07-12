@@ -2,11 +2,11 @@
 
 ## Design Principles
 
-1. **Independent Blocks** — ek block fail to baaki chalte rahe
-2. **Clean Interfaces** — blocks ek doosre se sirf API se baat kare
-3. **Fault Isolation** — ek block ka error doosre ko na mare
-4. **Independent Update** — ek block update karo, server down na ho
-5. **Health Checks** — har block ka status pata chale
+1. **Independent Blocks** — One block failing doesn't affect others
+2. **Clean Interfaces** — Blocks communicate only through APIs
+3. **Fault Isolation** — One block's error doesn't crash others
+4. **Independent Update** — Update one block without server downtime
+5. **Health Checks** — Every block reports its own status
 
 ---
 

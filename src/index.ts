@@ -69,6 +69,13 @@ async function main() {
       if (contentType && !contentType.includes('application/json') && !contentType.includes('multipart/form-data')) {
         return reply.code(415).send({ error: 'UNSUPPORTED_MEDIA_TYPE', message: 'Content-Type must be application/json' });
       }
+      // Message size limit: 16KB for message content
+      if (req.url === '/messages' && req.body) {
+        const body = req.body as Record<string, unknown>;
+        if (body.message && typeof body.message === 'string' && body.message.length > 16384) {
+          return reply.code(413).send({ error: 'MESSAGE_TOO_LARGE', message: 'Message content must be 16KB or less' });
+        }
+      }
     }
   });
 
@@ -102,7 +109,7 @@ async function main() {
       groups: '/groups',
       messages: '/messages',
       inbox: '/messages/inbox',
-      websocket: '/ws?token=***',
+      websocket: '/ws',
       health: '/health',
       logs: '/logs',
     },

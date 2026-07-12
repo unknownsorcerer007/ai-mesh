@@ -1,9 +1,49 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Database
 data/
-.env
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Environment
+.env
+.env.local
+.env.*.local
+.railway/
+
+# Logs
+*.log
+monitor.log
+
+# Temp files
+.tmp/
+tmp/
+*.tmp
+*.temp
+
+# Patches (may contain secrets)
+*.patch
+
+# Coverage
+coverage/
+.nyc_output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NATS
 nats-server

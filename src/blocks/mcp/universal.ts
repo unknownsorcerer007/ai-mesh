@@ -379,6 +379,94 @@ export function createMcpServer(): McpServer {
     return { content: [{ type: 'text', text: '✅ Left group' }] };
   });
 
+  // ─── check_messages (PROACTIVE NOTIFICATION) ───
+  // AI agents call this regularly to check for new messages
+  // Returns unread count + summary — lightweight, fast
+  server.tool('check_messages', '🔔 CHECK FOR NEW MESSAGES. Call this regularly to see if anything new arrived. Returns unread count and sender names.', {}, async () => {
+    const userId = auth.require();
+    const groups = getDb().prepare('SELECT group_id FROM group_members WHERE user_id = ?')
+      .all(userId) as { group_id: string }[];
+    if (groups.length === 0) return { content: [{ type: 'text', text: '📭 No groups joined.' }] };
+
+    let totalNew = 0;
+    const summaries: string[] = [];
+
+    for (const { group_id } of groups) {
+      try {
+        await ensureConsumer(group_id, userId);
+        const messages = await getPendingMessages(userId, group_id);
+        if (messages.length > 0) {
+          totalNew += messages.length;
+          const senders = [...new Set(messages.map(m => m.sender_username))].join(', ');
+          const groupInfo = getDb().prepare('SELECT name FROM groups WHERE id = ?').get(group_id) as { name: string } | undefined;
+          summaries.push(`  📬 ${groupInfo?.name || group_id}: ${messages.length} new from ${senders}`);
+        }
+      } catch { /* skip */ }
+    }
+
+    if (totalNew === 0) return { content: [{ type: 'text', text: '📭 No new messages.' }] };
+
+    return {
+      content: [{
+        type: 'text',
+        text: `🔔 ${totalNew} NEW MESSAGES:
+${summaries.join('\n')}
+
+Use 'receive_messages' to read them.`,
+      }],
+    };
+  });
+
+  // ─── watch_messages (PROACTIVE WATCH) ───
+  // Returns new messages since a given timestamp
+  // AI agents use this to track conversations in real-time
+  server.tool('watch_messages', '👁️ WATCH: Get new messages since a timestamp. Use this to track conversations. Returns messages newer than the given time.', {
+    since: z.string().describe('ISO timestamp — get messages after this time'),
+    group_id: z.string().optional().describe('Filter by group'),
+  }, async ({ since, group_id }) => {
+    const userId = auth.require();
+    const groups = getDb().prepare('SELECT group_id FROM group_members WHERE user_id = ?')
+      .all(userId) as { group_id: string }[];
+
+    const targetGroups = group_id ? [group_id] : groups.map(g => g.group_id);
+    const newMessages: StoredMessage[] = [];
+
+    for (const gid of targetGroups) {
+      try {
+        await ensureConsumer(gid, userId);
+        const messages = await getPendingMessages(userId, gid);
+        const filtered = messages.filter(m => m.timestamp > since);
+        if (filtered.length > 0) {
+          const stored = filtered.map(toStored);
+          saveMessages(stored);
+          newMessages.push(...stored);
+        }
+      } catch { /* skip */ }
+    }
+
+    // Also check local storage
+    const localNew = targetGroups.flatMap(gid => {
+      try {
+        const msgs = readMessages(gid, 100);
+        return msgs.filter(m => m.timestamp > since);
+      } catch { return []; }
+    });
+
+    // Merge and dedupe
+    const seen = new Set(localNew.map(m => m.id));
+    const allNew = [...localNew, ...newMessages.filter(m => !seen.has(m.id))];
+    allNew.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+    if (allNew.length === 0) return { content: [{ type: 'text', text: '👁️ No new messages since ' + since }] };
+
+    return {
+      content: [{
+        type: 'text',
+        text: `👁️ ${allNew.length} new messages since ${since}:\n\n${JSON.stringify(allNew, null, 2)}`,
+      }],
+    };
+  });
+
   return server;
 }
 

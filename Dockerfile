@@ -9,15 +9,17 @@ RUN npm run build
 FROM node:22-slim
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies (multi-arch compatible)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl sqlite3 ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Download NATS server binary
-RUN curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v2.10.22/nats-server-v2.10.22-linux-amd64.tar.gz" -o /tmp/nats.tar.gz && \
+# Download NATS server binary (auto-detect architecture)
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then NATS_ARCH="arm64"; else NATS_ARCH="amd64"; fi && \
+    curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v2.10.22/nats-server-v2.10.22-linux-${NATS_ARCH}.tar.gz" -o /tmp/nats.tar.gz && \
     tar xzf /tmp/nats.tar.gz -C /tmp && \
-    mv /tmp/nats-server-v2.10.22-linux-amd64/nats-server /usr/local/bin/ && \
+    mv /tmp/nats-server-v2.10.22-linux-${NATS_ARCH}/nats-server /usr/local/bin/ && \
     rm -rf /tmp/nats* && \
     chmod +x /usr/local/bin/nats-server
 
@@ -25,7 +27,7 @@ RUN curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v2.10.2
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist/ dist/
-COPY src/public/ public/
+COPY public/ public/
 COPY start-prod.sh /app/start-prod.sh
 RUN chmod +x /app/start-prod.sh
 

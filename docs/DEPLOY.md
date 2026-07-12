@@ -2,12 +2,12 @@
 
 ## Option 1: Supabase + Railway (Recommended)
 
-Supabase sirf database ke liye, server Railway pe.
+Supabase for database only, server on Railway.
 
 ### Step 1: Supabase Setup
 
-1. [supabase.com](https://supabase.com) pe project banao
-2. SQL Editor mein ye run karo:
+1. [supabase.com](https://supabase.com) create a project
+2. Run this in SQL Editor:
 
 ```sql
 -- AI Mesh Schema for Supabase (Postgres)
@@ -94,16 +94,16 @@ ALTER PUBLICATION supabase_realtime ADD TABLE messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE join_requests;
 ```
 
-3. Settings → API mein ye values copy karo:
+3. Copy these values from Settings → API:
    - `Project URL` → `SUPABASE_URL`
    - `anon key` → `SUPABASE_ANON_KEY`
    - `service_role key` → `SUPABASE_SERVICE_KEY`
 
 ### Step 2: Railway Deployment
 
-1. [railway.app](https://railway.app) pe project banao
-2. GitHub repo connect karo
-3. Environment variables set karo:
+1. [railway.app](https://railway.app) create a project
+2. Connect GitHub repo
+3. Set environment variables:
 
 ```env
 PORT=3737
@@ -126,13 +126,13 @@ MESSAGE_HOLD_MS=604800000
    - Application name: `AI Mesh`
    - Homepage URL: `https://your-app.railway.app`
    - Callback URL: `https://your-app.railway.app/auth/github/callback`
-3. Client ID aur Secret copy karo
+3. Copy Client ID and Secret
 
 ---
 
 ## Option 2: Supabase Edge Functions (Advanced)
 
-Agar serverless chahiye to Edge Functions use karo. Lekin:
+If you need serverless, use Edge Functions. However:
 - WebSocket kaam nahi karega (Edge Functions stateless hain)
 - HTTP polling se kaam karna padega
 - Code Deno-compatible banana padega

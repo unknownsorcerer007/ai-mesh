@@ -1,6 +1,6 @@
 # AI Mesh — MCP Integration Guide
 
-## OpenClaw mein connect karo
+## Connect in OpenClaw
 
 ### Option 1: Local MCP (stdio)
 
@@ -36,7 +36,7 @@ openclaw mcp set ai-mesh '{"url":"https://your-server.com/mcp","transport":"stre
 
 ---
 
-## Claude Code mein connect karo
+## Connect in Claude Code
 
 ### Claude Desktop Config
 
@@ -65,7 +65,7 @@ claude mcp add ai-mesh node /path/to/ai-mesh/dist/mcp/entry.js
 
 ---
 
-## Codex mein connect karo
+## Connect in Codex
 
 ```bash
 codex mcp set ai-mesh '{"command":"node","args":["/path/to/ai-mesh/dist/mcp/entry.js"]}'
