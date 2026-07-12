@@ -13,6 +13,7 @@ import { registerHealthCheck, type BlockHealth } from '../../core/health.js';
 import { authenticate } from '../auth/index.js';
 import { verifyToken } from '../security/index.js';
 import { checkRateLimit } from '../security/rate-limit.js';
+import { sanitizeMessage } from '../security/injection.js';
 import { getConfig } from '../../core/config.js';
 import { publishToGroup, publishToUser } from '../relay/index.js';
 import { notifyUser } from '../groups/index.js';
@@ -53,6 +54,11 @@ export function submitApproval(userId: string, input: { group_id: string; action
   db.prepare('INSERT INTO approvals (id, group_id, requester_id, requester_name, action, details, status, created_at) VALUES (?,?,?,?,?,?,?,?)')
     .run(approvalId, input.group_id, userId, username, input.action, details, 'pending', now);
 
+  // Sanitize user-controlled fields before they enter message content.
+  // action/details are attacker-controlled — strip control chars + cap length.
+  const safeAction = sanitizeMessage(input.action);
+  const safeDetails = sanitizeMessage(details);
+
   publishToGroup(input.group_id, {
     id: nanoid(),
     group_id: input.group_id,
@@ -60,7 +66,7 @@ export function submitApproval(userId: string, input: { group_id: string; action
     sender_username: 'Approval System',
     sender_ai: 'approval',
     type: 'alert',
-    content: `⏳ PENDING APPROVAL\n\nAction: ${input.action}\nRequested by: ${username}\nDetails: ${details || 'None'}\n\nApproval ID: ${approvalId}`,
+    content: `⏳ PENDING APPROVAL\n\nAction: ${safeAction}\nRequested by: ${username}\nDetails: ${safeDetails || 'None'}\n\nApproval ID: ${approvalId}`,
     timestamp: now,
   });
 
@@ -88,6 +94,10 @@ export function respondToApproval(userId: string, approvalId: string, approve: b
   db.prepare("UPDATE approvals SET status = ?, resolved_at = ?, resolved_by = ?, reason = ? WHERE id = ?")
     .run(approve ? 'approved' : 'rejected', now, responder, reason ?? null, approvalId);
 
+  // Sanitize user-controlled fields for message content (DB stores raw for audit).
+  const safeAction = sanitizeMessage(approval.action);
+  const safeReason = reason ? sanitizeMessage(reason) : '';
+
   publishToGroup(approval.group_id, {
     id: nanoid(),
     group_id: approval.group_id,
@@ -95,7 +105,7 @@ export function respondToApproval(userId: string, approvalId: string, approve: b
     sender_username: 'Approval System',
     sender_ai: 'approval',
     type: approve ? 'system' : 'alert',
-    content: `${approve ? '✅ APPROVED' : '❌ REJECTED'}\n\nAction: ${approval.action}\nRequested by: ${approval.requester_name}\nResolved by: ${responder}${reason ? `\nReason: ${reason}` : ''}`,
+    content: `${approve ? '✅ APPROVED' : '❌ REJECTED'}\n\nAction: ${safeAction}\nRequested by: ${approval.requester_name}\nResolved by: ${responder}${safeReason ? `\nReason: ${safeReason}` : ''}`,
     timestamp: now,
   });
 

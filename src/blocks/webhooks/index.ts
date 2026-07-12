@@ -18,6 +18,7 @@ import { registerHealthCheck, type BlockHealth } from '../../core/health.js';
 import { authenticate } from '../auth/index.js';
 import { checkRateLimit } from '../security/rate-limit.js';
 import { parse, createWebhookSchema } from '../../shared/validation.js';
+import { sanitizeMessage } from '../security/injection.js';
 import { publishToGroup } from '../relay/index.js';
 import type { RelayMessage } from '../../shared/types.js';
 
@@ -234,9 +235,17 @@ export function registerWebhookRoutes(app: FastifyInstance) {
 
     const msgId = nanoid();
     const now = new Date().toISOString();
-    const content = parsed.url
-      ? `${parsed.title}\n${parsed.body}\n🔗 ${parsed.url}`
-      : `${parsed.title}\n${parsed.body}`;
+    // Sanitize all attacker-controlled fields before they enter message content.
+    // Webhook payloads (even signed ones) can carry malicious text — a GitHub
+    // commit message, a GitLab MR title, etc. We don't run detectInjection
+    // here because webhook content legitimately contains code/commands, but we
+    // DO strip control characters and cap length via sanitizeMessage.
+    const safeTitle = sanitizeMessage(parsed.title);
+    const safeBody = sanitizeMessage(parsed.body);
+    const safeUrl = parsed.url ? sanitizeMessage(parsed.url) : '';
+    const content = safeUrl
+      ? `${safeTitle}\n${safeBody}\n🔗 ${safeUrl}`
+      : `${safeTitle}\n${safeBody}`;
 
     try {
       const relayMsg: RelayMessage = {
