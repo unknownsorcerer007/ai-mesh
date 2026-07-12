@@ -8,6 +8,7 @@ export interface AppConfig {
     host: string;
     nodeEnv: 'development' | 'production' | 'test';
     corsOrigin: string[];
+    uiUrl: string; // Trusted redirect target for OAuth callbacks — never derived from Host header
   };
   github: {
     clientId: string;
@@ -56,6 +57,7 @@ function envBool(key: string, fallback: boolean): boolean {
   if (!raw) return fallback;
   return raw === 'true' || raw === '1';
 }
+// NOTE: envBool is retained for future use; current config reads only env/envInt.
 
 let config: AppConfig | null = null;
 
@@ -70,6 +72,11 @@ export function getConfig(): AppConfig {
       host: env('HOST', '0.0.0.0'),
       nodeEnv,
       corsOrigin: (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean),
+      // Trusted UI URL for post-OAuth redirect. In production this MUST be set
+      // to the real frontend origin — otherwise we'd have to trust the Host
+      // header, which is attacker-controlled and would let an attacker steal
+      // the auth token via redirect to their own domain.
+      uiUrl: env('UI_URL', 'http://localhost:3737'),
     },
     github: {
       clientId: env('GITHUB_CLIENT_ID', ''),
@@ -99,11 +106,20 @@ export function getConfig(): AppConfig {
 
   // Validate critical config in production
   if (nodeEnv === 'production') {
-    if (config.session.secret === 'dev-secret-change-me') {
-      throw new Error('SESSION_SECRET must be set in production');
+    if (config.session.secret === 'dev-secret-change-me' || config.session.secret.length < 32) {
+      throw new Error('SESSION_SECRET must be set in production and be at least 32 chars (use: openssl rand -hex 32)');
     }
     if (!config.github.clientId || !config.github.clientSecret) {
       console.warn('[config] GitHub OAuth not configured — auth will not work');
+    }
+    // UI_URL must be an absolute URL with http(s) — the OAuth callback redirects
+    // to it with the token in the hash fragment, so a relative or malformed value
+    // would break login silently.
+    try {
+      const u = new URL(config.server.uiUrl);
+      if (u.hash) throw new Error('UI_URL must not contain a hash fragment');
+    } catch {
+      throw new Error(`UI_URL is invalid (got "${config.server.uiUrl}") — must be an absolute URL like https://app.example.com`);
     }
   }
 

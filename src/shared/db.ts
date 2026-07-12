@@ -114,6 +114,25 @@ export function setupSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_threads_group ON threads(group_id);
 
+    -- Thread replies persisted here so GET /thread/:id is a simple SQLite query
+    -- instead of "fetch+ack ALL pending group messages then filter client-side"
+    -- (which destroyed the user's inbox on every thread view).
+    CREATE TABLE IF NOT EXISTS thread_replies (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      group_id TEXT NOT NULL,
+      parent_message_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      sender_username TEXT NOT NULL,
+      sender_ai TEXT,
+      type TEXT NOT NULL DEFAULT 'text',
+      content TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_thread_replies_thread ON thread_replies(thread_id, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_thread_replies_parent ON thread_replies(parent_message_id, timestamp);
+
     CREATE TABLE IF NOT EXISTS approvals (
       id TEXT PRIMARY KEY,
       group_id TEXT NOT NULL,
@@ -147,10 +166,38 @@ export function setupSchema() {
     );
 
     CREATE TABLE IF NOT EXISTS token_blacklist (
-      token TEXT PRIMARY KEY,
+      token_hash TEXT PRIMARY KEY,
       expires_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires ON token_blacklist(expires_at);
+
+    -- Per-user notifications (was a global in-memory array — any user could read/wipe
+    -- everyone's notifications. Now scoped per-user, persists across restarts, and
+    -- survives multi-instance deploys because it lives in the shared DB.)
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      group_id TEXT,
+      sender TEXT,
+      sender_ai TEXT,
+      read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read, created_at DESC);
+
+    -- Shared rate-limit counters (was in-memory per-process — bypassable by running
+    -- N instances. Now in SQLite so every instance sees the same counters.)
+    -- Fixed-window: (key, window_start) → count. Old windows cleaned periodically.
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      key TEXT NOT NULL,
+      window_start INTEGER NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (key, window_start)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
   `);
 
   return db;

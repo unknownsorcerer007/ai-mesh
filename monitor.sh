@@ -1,8 +1,10 @@
 #!/bin/bash
 # AI Mesh — Live Monitor (runs in loop)
-BASE="https://ai-mesh-app-production.up.railway.app"
-INTERVAL=300  # 5 minutes
-LOG="/home/work/.openclaw/workspace/.openclaw/tmp/ai-mesh/monitor.log"
+BASE="${AI_MESH_SERVER:-https://ai-mesh-app-production.up.railway.app}"
+INTERVAL="${MONITOR_INTERVAL:-300}"  # 5 minutes
+LOG_DIR="$HOME/.ai-mesh"
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/monitor.log"
 
 echo "[$(date)] Monitor started — checking every ${INTERVAL}s" | tee -a "$LOG"
 

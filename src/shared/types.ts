@@ -51,7 +51,7 @@ export interface RelayMessage {
 }
 
 export interface RelayEvent {
-  type: 'join_request' | 'member_joined' | 'member_left' | 'notification' | 'error';
+  type: 'join_request' | 'join_rejected' | 'member_joined' | 'member_left' | 'notification' | 'approval' | 'error';
   payload: Record<string, unknown>;
   timestamp: string;
 }

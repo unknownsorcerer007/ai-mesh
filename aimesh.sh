@@ -1,8 +1,16 @@
 #!/bin/bash
-# AI Mesh CLI wrapper for OpenClaw
+# AI Mesh CLI wrapper
 # Usage: bash aimesh.sh <command> [args...]
+#
+# Security: JSON bodies and URL params are built with jq so user input can't
+# break out of the JSON string or the URL. The original used string
+# interpolation, which allowed JSON injection (e.g. a message containing `"`
+# could forge extra fields) and command injection in the search path (a query
+# containing `'` could execute arbitrary Python).
 
-BASE="https://ai-mesh-app-production.up.railway.app"
+set -euo pipefail
+
+BASE="${AI_MESH_SERVER:-https://ai-mesh-app-production.up.railway.app}"
 TOKEN_FILE="$HOME/.aimesh-token"
 
 # Get or refresh token
@@ -11,71 +19,92 @@ get_token() {
     cat "$TOKEN_FILE"
     return
   fi
-  PAT="$(grep GH_TOKEN ~/.bashrc 2>/dev/null | cut -d'"' -f2)"
-  if [ -z "$PAT" ]; then
-    echo "ERROR: No GitHub PAT found" >&2
+  if [ -z "${GH_TOKEN:-}" ]; then
+    echo "ERROR: Set GH_TOKEN env var to a GitHub PAT" >&2
     exit 1
   fi
-  TOKEN=$(curl -s -X POST -H "Content-Type: application/json" -d "{\"pat\": \"$PAT\"}" "$BASE/auth/pat" | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+  # Build JSON with jq so GH_TOKEN is properly escaped even if it contains quotes.
+  BODY=$(jq -nc --arg pat "$GH_TOKEN" '{pat: $pat}')
+  TOKEN=$(curl -sf -X POST -H "Content-Type: application/json" -d "$BODY" "$BASE/auth/pat" | jq -r '.token // empty')
   if [ -z "$TOKEN" ]; then
     echo "ERROR: Login failed" >&2
     exit 1
   fi
-  echo "$TOKEN" > "$TOKEN_FILE"
+  # Save token 0600 — other local users must not read it.
+  printf '%s' "$TOKEN" > "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
   echo "$TOKEN"
 }
 
 TOKEN=$(get_token)
 AUTH="Authorization: Bearer $TOKEN"
 
-case "$1" in
+case "${1:-help}" in
   me)
-    curl -s -H "$AUTH" "$BASE/auth/me"
+    curl -sf -H "$AUTH" "$BASE/auth/me"
     ;;
   groups)
-    curl -s -H "$AUTH" "$BASE/groups"
+    curl -sf -H "$AUTH" "$BASE/groups"
     ;;
   create-group)
-    curl -s -X POST -H "Content-Type: application/json" -H "$AUTH" -d "{\"name\":\"$2\"}" "$BASE/groups"
+    BODY=$(jq -nc --arg name "${2:?usage: create-group <name>}" '{name: $name}')
+    curl -sf -X POST -H "Content-Type: application/json" -H "$AUTH" -d "$BODY" "$BASE/groups"
     ;;
   send)
-    curl -s -X POST -H "Content-Type: application/json" -H "$AUTH" -d "{\"group_id\":\"$2\",\"message\":\"$3\",\"type\":\"text\"}" "$BASE/messages"
+    GROUP_ID="${2:?usage: send <group_id> <message>}"
+    MSG="${3:?usage: send <group_id> <message>}"
+    BODY=$(jq -nc --arg gid "$GROUP_ID" --arg msg "$MSG" '{group_id: $gid, message: $msg, type: "text"}')
+    curl -sf -X POST -H "Content-Type: application/json" -H "$AUTH" -d "$BODY" "$BASE/messages"
     ;;
   history)
-    curl -s -H "$AUTH" "$BASE/messages/$2"
+    curl -sf -H "$AUTH" "$BASE/messages/${2:?usage: history <group_id>}"
     ;;
   inbox)
-    curl -s -H "$AUTH" "$BASE/messages/inbox"
+    curl -sf -H "$AUTH" "$BASE/messages/inbox"
     ;;
   search)
-    curl -s -H "$AUTH" "$BASE/search?q=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$2'))")"
+    Q="${2:?usage: search <query>}"
+    # URL-encode via jq, not Python string interpolation (which was injectable).
+    ENC=$(jq -rn --arg q "$Q" '$q|@uri')
+    curl -sf -H "$AUTH" "$BASE/search?q=$ENC"
     ;;
   approve)
-    curl -s -X POST -H "Content-Type: application/json" -H "$AUTH" -d "{\"approval_id\":\"$2\",\"approve\":true}" "$BASE/approval/respond"
+    ID="${2:?usage: approve <approval_id>}"
+    BODY=$(jq -nc --arg id "$ID" '{approval_id: $id, approve: true}')
+    curl -sf -X POST -H "Content-Type: application/json" -H "$AUTH" -d "$BODY" "$BASE/approval/respond"
     ;;
   reject)
-    curl -s -X POST -H "Content-Type: application/json" -H "$AUTH" -d "{\"approval_id\":\"$2\",\"approve\":false,\"reason\":\"$3\"}" "$BASE/approval/respond"
+    ID="${2:?usage: reject <approval_id> [reason]}"
+    REASON="${3:-}"
+    BODY=$(jq -nc --arg id "$ID" --arg reason "$REASON" '{approval_id: $id, approve: false, reason: $reason}')
+    curl -sf -X POST -H "Content-Type: application/json" -H "$AUTH" -d "$BODY" "$BASE/approval/respond"
     ;;
   pending)
-    curl -s -H "$AUTH" "$BASE/approval/pending"
+    curl -sf -H "$AUTH" "$BASE/approval/pending"
     ;;
   health)
-    curl -s "$BASE/health"
+    curl -sf "$BASE/health"
     ;;
   *)
-    echo "AI Mesh CLI"
-    echo ""
-    echo "Commands:"
-    echo "  me                    Show current user"
-    echo "  groups                List groups"
-    echo "  create-group <name>   Create group"
-    echo "  send <group_id> <msg> Send message"
-    echo "  history <group_id>    Group history"
-    echo "  inbox                 Check inbox"
-    echo "  search <query>        Search messages"
-    echo "  pending               Pending approvals"
-    echo "  approve <id>          Approve action"
-    echo "  reject <id> <reason>  Reject action"
-    echo "  health                Server health"
+    cat <<'USAGE'
+AI Mesh CLI
+
+Commands:
+  me                    Show current user
+  groups                List groups
+  create-group <name>   Create group
+  send <group_id> <msg> Send message
+  history <group_id>    Group history
+  inbox                 Check inbox
+  search <query>        Search messages
+  pending               Pending approvals
+  approve <id>          Approve action
+  reject <id> [reason]  Reject action
+  health                Server health
+
+Env:
+  AI_MESH_SERVER        Server URL (default: https://ai-mesh-app-production.up.railway.app)
+  GH_TOKEN              GitHub PAT (for auto-login)
+USAGE
     ;;
 esac

@@ -34,11 +34,15 @@ export function unregisterHealthCheck(blockName: string) {
 // ─── Run All Health Checks (with timeout) ───
 const HEALTH_CHECK_TIMEOUT_MS = 5000; // 5 seconds per check
 
+// Race a promise against a timeout, but always clear the timer so a fast-resolving
+// health check doesn't leak an orphaned rejected promise (which would fire
+// unhandledRejection after the timeout elapsed).
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), ms)),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Health check timeout')), ms);
+  });
+  return Promise.race([promise.finally(() => { if (timer) clearTimeout(timer); }), timeout]);
 }
 
 export async function getSystemHealth(): Promise<SystemHealth> {

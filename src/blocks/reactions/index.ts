@@ -1,12 +1,25 @@
 // Block: Message Reactions
-// Emoji reactions on messages (like Slack)
-// SQLite-backed — survives restarts
+// Emoji reactions on messages.
+//
+// Fixes vs original:
+//  - Rate-limited (was not — a user could add millions of reactions).
+//  - Emoji validated against a real emoji regex (was just a length check that
+//    allowed '<script>').
+//  - DELETE /reactions now checks membership (was missing).
+//  - Uses Zod schema for input validation.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { nanoid } from 'nanoid';
 import { getDb } from '../../shared/db.js';
 import { registerHealthCheck } from '../../core/health.js';
 import { authenticate } from '../auth/index.js';
+import { checkRateLimit } from '../security/rate-limit.js';
+import { parse, reactionSchema } from '../../shared/validation.js';
+
+// Emoji presentation: covers most single-grapheme emoji. We don't need to be
+// exhaustive — we just need to reject anything containing markup like <script>.
+// The regex allows Unicode emoji + ZWJ + variation selectors, up to 32 chars.
+const EMOJI_RE = /^(\p{Extended_Pictographic}(\p{Emoji_Modifier}|\uFE0F\u20E3?|\u200D\p{Extended_Pictographic})*|\u200d?\p{Extended_Pictographic})+$/u;
 
 export function registerReactionRoutes(app: FastifyInstance) {
   const db = getDb();
@@ -21,28 +34,26 @@ export function registerReactionRoutes(app: FastifyInstance) {
   });
 
   // ─── Add Reaction ───
-  app.post('/reactions', async (req: FastifyRequest<{ Body: {
-    group_id: string;
-    message_id: string;
-    emoji: string;
-  } }>, reply) => {
+  app.post('/reactions', async (req, reply) => {
     const userId = authenticate(req);
     if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
 
-    const { group_id, message_id, emoji } = req.body;
-    if (!group_id || !message_id || !emoji) {
-      return reply.code(400).send({ error: 'MISSING_FIELDS' });
+    const parsed = parse(reactionSchema, req.body);
+    if (!parsed.ok) return reply.code(400).send({ error: 'INVALID_REQUEST', message: parsed.error });
+    const { group_id, message_id, emoji } = parsed.data;
+
+    // Validate emoji presentation (blocks '<script>' etc.)
+    if (!EMOJI_RE.test(emoji)) {
+      return reply.code(400).send({ error: 'INVALID_EMOJI', message: 'Must be a single emoji' });
     }
 
     const member = db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?')
       .get(group_id, userId);
     if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
-    if (emoji.length > 8) {
-      return reply.code(400).send({ error: 'INVALID_EMOJI' });
-    }
-
-    const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string };
+    // Rate limit (per-user) — 60 reactions per minute
+    const rl = checkRateLimit(`react:${userId}`, 60_000, 60);
+    if (!rl.allowed) return reply.code(429).send({ error: 'RATE_LIMITED' });
 
     try {
       db.prepare('INSERT OR IGNORE INTO reactions (id, message_id, group_id, emoji, user_id) VALUES (?,?,?,?,?)')
@@ -54,23 +65,22 @@ export function registerReactionRoutes(app: FastifyInstance) {
       throw err;
     }
 
-    return reply.send({
-      message_id,
-      emoji,
-      count: getReactionCount(message_id, emoji),
-    });
+    return reply.send({ message_id, emoji, count: getReactionCount(message_id, emoji) });
   });
 
-  // ─── Remove Reaction ───
-  app.delete('/reactions', async (req: FastifyRequest<{ Body: {
-    group_id: string;
-    message_id: string;
-    emoji: string;
-  } }>, reply) => {
+  // ─── Remove Reaction (membership-checked) ───
+  app.delete('/reactions', async (req, reply) => {
     const userId = authenticate(req);
     if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
 
-    const { message_id, emoji } = req.body;
+    const parsed = parse(reactionSchema, req.body);
+    if (!parsed.ok) return reply.code(400).send({ error: 'INVALID_REQUEST', message: parsed.error });
+    const { group_id, message_id, emoji } = parsed.data;
+
+    // The original didn't check membership — any user could delete any reaction.
+    const member = db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?')
+      .get(group_id, userId);
+    if (!member) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
 
     db.prepare('DELETE FROM reactions WHERE message_id = ? AND emoji = ? AND user_id = ?')
       .run(message_id, emoji, userId);

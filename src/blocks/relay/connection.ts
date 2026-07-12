@@ -44,6 +44,18 @@ export async function connectRelay(): Promise<NatsConnection> {
   jsm = await nc.jetstreamManager();
   await setupStreams(jsm);
 
+  // Sync the in-memory consumer map from NATS (so a restart doesn't "forget"
+  // durable consumers that are still held server-side) and schedule periodic
+  // cleanup of expired ones.
+  try {
+    const { syncConsumersFromNats, scheduleConsumerCleanup } = await import('./consumers.js');
+    const synced = await syncConsumersFromNats();
+    if (synced > 0) console.info(`[relay] Synced ${synced} durable consumers from NATS`);
+    scheduleConsumerCleanup();
+  } catch (err) {
+    console.warn('[relay] Consumer sync failed:', err);
+  }
+
   // Register health check
   registerHealthCheck('relay', async (): Promise<BlockHealth> => {
     if (!nc || nc.isClosed()) {

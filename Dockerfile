@@ -31,7 +31,11 @@ COPY public/ public/
 COPY start-prod.sh /app/start-prod.sh
 RUN chmod +x /app/start-prod.sh
 
-RUN mkdir -p data
+RUN mkdir -p data && chown -R node:node /app
+
+# Drop privileges — the original ran as root, which meant a path-traversal bug
+# in any file-handling code gave the attacker root inside the container.
+USER node
 
 ENV NODE_ENV=production
 ENV PORT=3737

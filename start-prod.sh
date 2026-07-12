@@ -1,7 +1,8 @@
 #!/bin/bash
 # AI Mesh — Production start script
-# If NATS_URL points to external server, skip local NATS
-# Otherwise start local NATS for single-container mode
+# If NATS_URL points to an external server, skip local NATS.
+# Otherwise start local NATS (single-container mode) with auth if credentials
+# are provided.
 
 set -e
 
@@ -25,12 +26,17 @@ trap cleanup SIGTERM SIGINT
 echo "🤖 AI Mesh — Starting..."
 
 # Check if NATS_URL points to external server
-NATS_HOST=$(echo "${NATS_URL:-nats://localhost:4222}" | sed 's|nats://||' | cut -d: -f1)
+NATS_HOST=$(echo "${NATS_URL:-nats://localhost:4222}" | sed 's|nats://||' | sed 's|.*@||' | cut -d: -f1)
 
 if [ "$NATS_HOST" = "localhost" ] || [ "$NATS_HOST" = "127.0.0.1" ]; then
-  # Start local NATS
+  # Start local NATS — with auth if NATS_USER/NATS_PASSWORD are set
   echo "📡 Starting local NATS relay..."
-  nats-server -js -p 4222 -sd /app/data/nats &
+  if [ -n "${NATS_USER:-}" ] && [ -n "${NATS_PASSWORD:-}" ]; then
+    nats-server -js -p 4222 -user "$NATS_USER" -pass "$NATS_PASSWORD" -sd /app/data/nats &
+  else
+    echo "⚠️  WARNING: Starting NATS without auth. Set NATS_USER and NATS_PASSWORD in production." >&2
+    nats-server -js -p 4222 -sd /app/data/nats &
+  fi
   NATS_PID=$!
   sleep 2
 

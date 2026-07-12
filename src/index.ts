@@ -79,14 +79,15 @@ async function main() {
     }
   });
 
-  // ─── Static UI ───
+  // ─── Static UI (cached at startup — was readFileSync on every request) ───
+  const { readFileSync, existsSync } = await import('node:fs');
+  const { resolve } = await import('node:path');
+  const htmlPath = resolve(process.cwd(), 'public', 'index.html');
+  const fallbackPath = new URL('../public/index.html', import.meta.url);
+  const indexHtml = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf-8') : readFileSync(fallbackPath, 'utf-8');
+
   app.get('/', async (_req, reply) => {
-    const { readFileSync, existsSync } = await import('node:fs');
-    const { resolve } = await import('node:path');
-    const htmlPath = resolve(process.cwd(), 'public', 'index.html');
-    const fallbackPath = new URL('../public/index.html', import.meta.url);
-    const html = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf-8') : readFileSync(fallbackPath, 'utf-8');
-    reply.type('text/html').send(html);
+    reply.type('text/html').send(indexHtml);
   });
 
   // ─── Health Endpoint ───

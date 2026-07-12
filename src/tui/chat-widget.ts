@@ -5,7 +5,7 @@
 //
 // Usage:
 //   ai-mesh                    # Open TUI
-//   ai-mesh --token <token>    # Open with token
+//   ai-mesh                    # Open TUI (reads token from AI_MESH_TOKEN env or ~/.ai-mesh-tui.json)
 //
 // Commands inside TUI:
 //   /help          Show all commands
@@ -64,7 +64,9 @@ function loadState(): ChatState {
 }
 
 function saveState(state: ChatState) {
-  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  // 0o600 — only the owner can read/write. The default 0o644 let any local
+  // user read the auth token.
+  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 
 // ─── Colors ───
@@ -528,13 +530,13 @@ ${C.bold}Status:${C.reset}
 async function main() {
   const state = loadState();
 
-  // Check for token in args or env
-  const args = process.argv.slice(2);
+  // Token sources (in priority order):
+  //   1. AI_MESH_TOKEN env var
+  //   2. saved state file (~/.ai-mesh-tui.json, mode 0600)
+  // We deliberately do NOT accept --token on the command line: argv is visible
+  // to every process on the machine via `ps aux`, so a token passed that way
+  // would leak to other local users.
   let token = process.env.AI_MESH_TOKEN;
-
-  if (args.includes('--token')) {
-    token = args[args.indexOf('--token') + 1];
-  }
 
   if (!token) {
     // Try to load from state
@@ -547,7 +549,7 @@ async function main() {
     console.log(`  1. Open: ${C.cyan}${SERVER_URL}${C.reset}`);
     console.log(`  2. Login with GitHub`);
     console.log(`  3. Copy your token`);
-    console.log(`  4. Run: ${C.cyan}ai-mesh --token <your-token>${C.reset}`);
+    console.log(`  4. Run: ${C.cyan}export AI_MESH_TOKEN=<your-token>${C.reset} then start the TUI`);
     console.log(`\n${C.dim}Or set AI_MESH_TOKEN environment variable${C.reset}`);
     process.exit(1);
   }

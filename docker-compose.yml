@@ -1,13 +1,22 @@
 # AI Mesh — Docker Compose
-# Runs: NATS relay + AI Mesh server
+# Runs: NATS relay (internal, authenticated) + AI Mesh server
+#
+# Security notes:
+#  - NATS core port (4222) is NOT exposed to the host — only the ai-mesh
+#    container can reach it. The original exposed 4222 publicly with NO auth,
+#    so anyone could subscribe to mesh.msg.> and read every message.
+#  - NATS now requires auth (NATS_USER / NATS_PASSWORD). Even if the port were
+#    exposed, an attacker couldn't connect without credentials.
+#  - The monitoring port (8222) is also internal-only.
 
 services:
   nats:
     image: nats:2.14-alpine
-    command: ["-js", "-p", "4222"]
-    ports:
-      - "4222:4222"
-      - "8222:8222"  # NATS monitoring
+    # Authenticated + JetStream. Credentials come from env so they're not baked
+    # into the image. The ai-mesh service connects with the same user/pass.
+    command: ["-js", "-p", "4222", "-user", "${NATS_USER:-mesh}", "-pass", "${NATS_PASSWORD:?NATS_PASSWORD must be set}"]
+    # No `ports:` — NATS is internal-only. The ai-mesh service reaches it via
+    # the docker network (nats:4222).
     volumes:
       - nats-data:/data
     restart: unless-stopped
@@ -24,13 +33,14 @@ services:
     environment:
       - PORT=3737
       - HOST=0.0.0.0
-      - NATS_URL=nats://nats:4222
+      - NATS_URL=nats://${NATS_USER:-mesh}:${NATS_PASSWORD}@nats:4222
       - DB_PATH=/app/data/ai-mesh.db
       - NODE_ENV=production
+      - UI_URL=${UI_URL:?UI_URL must be set (e.g. https://app.example.com)}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
       - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL}
-      - SESSION_SECRET=${SESSION_SECRET}
+      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set (use: openssl rand -hex 32)}
     volumes:
       - mesh-data:/app/data
     depends_on:

@@ -1,41 +1,49 @@
 // Notifications: HTTP Routes
-// MCP agents can check notifications via API
+// All routes are scoped to the authenticated user — no cross-user access.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { authenticate } from '../auth/index.js';
-import { getNotifications, clearNotifications, getUnreadCount, type Notification } from './index.js';
+import { getNotifications, getUnreadNotifications, clearNotifications, getUnreadCount, markAllRead } from './index.js';
 
 export function registerNotificationRoutes(app: FastifyInstance) {
 
-  // ─── Get Notifications ───
-  app.get('/notifications', async (req: FastifyRequest<{ Querystring: { limit?: string } }>, reply) => {
+  // ─── Get Notifications (mine only) ───
+  app.get('/notifications', async (req: FastifyRequest<{ Querystring: { limit?: string; unread?: string } }>, reply) => {
     const userId = authenticate(req);
     if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
 
     const limit = Math.min(Number(req.query.limit) || 20, 100);
-    const notifications = getNotifications(limit);
+    const onlyUnread = req.query.unread === '1' || req.query.unread === 'true';
+    const notifications = onlyUnread ? getUnreadNotifications(userId, limit) : getNotifications(userId, limit);
 
     return reply.send({
       notifications,
       count: notifications.length,
-      unread: getUnreadCount(),
+      unread: getUnreadCount(userId),
     });
   });
 
-  // ─── Clear Notifications ───
+  // ─── Clear MY notifications (not anyone else's) ───
   app.delete('/notifications', async (req, reply) => {
     const userId = authenticate(req);
     if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
 
-    clearNotifications();
+    clearNotifications(userId);
     return reply.send({ status: 'cleared' });
   });
 
-  // ─── Notification Count ───
+  // ─── Mark all as read ───
+  app.post('/notifications/read', async (req, reply) => {
+    const userId = authenticate(req);
+    if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
+    const marked = markAllRead(userId);
+    return reply.send({ marked, unread: getUnreadCount(userId) });
+  });
+
+  // ─── Unread count ───
   app.get('/notifications/count', async (req, reply) => {
     const userId = authenticate(req);
     if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
-
-    return reply.send({ unread: getUnreadCount() });
+    return reply.send({ unread: getUnreadCount(userId) });
   });
 }
