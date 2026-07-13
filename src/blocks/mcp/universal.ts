@@ -42,6 +42,30 @@ import { sendMessageToGroup } from '../messages/index.js';
 import { submitApproval, respondToApproval } from '../approval/index.js';
 import type { RelayMessage } from '../../shared/types.js';
 
+// F-07 fix: stricter schemas for the connect tool. Previously `token` had no
+// max length (a 10MB string would be passed to verifyToken, which base64-decodes
+// it — a cheap DoS), and `agent_name` accepted any string including newlines and
+// control characters that would later be embedded in messages as `sender_ai`.
+const connectTokenSchema = z.string().min(1).max(2048);
+const agentNameSchema = z.string().min(1).max(64).regex(
+  /^[A-Za-z0-9 _.\-]+$/,
+  'agent_name may only contain letters, digits, spaces, underscore, dot, and hyphen',
+);
+
+// F-10 fix: in production, MCP stderr should not leak topology details (NATS
+// URL, file paths, full error strings) — the MCP client may pipe stderr into
+// an LLM context window, exposing internal configuration. We log full detail
+// in development and single-line summaries in production.
+const isProd = process.env.NODE_ENV === 'production';
+function mcpLog(msg: string) {
+  if (isProd) {
+    // Single-line, no topology. Just enough to confirm the server is alive.
+    process.stderr.write(`[mcp] ${msg.replace(/\n/g, ' ').slice(0, 80)}\n`);
+  } else {
+    process.stderr.write(`[mcp] ${msg}\n`);
+  }
+}
+
 // ─── Per-server auth context ───
 // Each createMcpServer() call gets its own closure — safe for concurrent HTTP
 // connections (each /mcp request creates a new McpServer). The agent name is
@@ -84,10 +108,47 @@ export function createMcpServer(): McpServer {
   const server = new McpServer({ name: 'ai-mesh', version: '1.0.0' });
   const auth = createAuthContext();
 
+  // F-06 fix: per-userId rate limit wrapper for MCP mutation tools.
+  // Without this, a compromised or buggy agent can call send_message,
+  // create_group, submit_approval, etc. as fast as it wants — the underlying
+  // domain functions DO have per-userId rate limits (e.g. msg:${userId}), but
+  // those are soft caps inside the business logic. This wrapper adds an
+  // explicit MCP-layer cap so the agent gets a clean rate-limit error before
+  // the call even reaches the business logic.
+  //
+  // Caps are per-tool (different tools warrant different limits) and per-userId
+  // (so one compromised agent doesn't affect others). Read-only tools
+  // (list_groups, get_group_history, check_messages, etc.) are NOT wrapped —
+  // they're cheap and idempotent.
+  const MCP_TOOL_LIMITS: Record<string, { windowMs: number; max: number }> = {
+    send_message:        { windowMs: 60_000, max: 60 },  // 60 msg/min
+    create_group:        { windowMs: 3_600_000, max: 10 }, // 10 groups/hour
+    join_group:          { windowMs: 300_000, max: 10 }, // 10 joins/5min
+    submit_approval:     { windowMs: 60_000, max: 20 },  // 20/min
+    respond_approval:    { windowMs: 60_000, max: 30 },  // 30/min
+    respond_to_approval: { windowMs: 60_000, max: 30 },  // alias safe
+    approve_join:        { windowMs: 60_000, max: 30 },  // 30/min
+    leave_group:         { windowMs: 60_000, max: 10 },  // 10/min (destructive)
+    clear_local_messages:{ windowMs: 60_000, max: 10 },  // 10/min (destructive)
+  };
+
+  function checkMcpRateLimit(toolName: string): { ok: true } | { ok: false; text: string } {
+    const userId = auth.userId;
+    if (!userId) return { ok: true }; // not authenticated yet — connect tool has no limit
+    const cap = MCP_TOOL_LIMITS[toolName];
+    if (!cap) return { ok: true }; // no cap defined for this tool
+    const rl = checkRateLimit(`mcp:${toolName}:${userId}`, cap.windowMs, cap.max);
+    if (!rl.allowed) {
+      const retryAfterSec = Math.ceil((rl.resetAt - Date.now()) / 1000);
+      return { ok: false, text: `❌ RATE_LIMITED: Too many ${toolName} calls. Retry after ${retryAfterSec}s.` };
+    }
+    return { ok: true };
+  }
+
   // ─── connect ───
   server.tool('connect', 'Authenticate with AI Mesh', {
-    token: z.string().describe('Your auth token'),
-    agent_name: z.string().max(64).optional().describe('Name of the AI agent (e.g. "claude-code", "codex"). Used as sender_ai on messages so other agents know who sent them.'),
+    token: connectTokenSchema.describe('Your auth token (max 2048 chars)'),
+    agent_name: agentNameSchema.optional().describe('Name of the AI agent (e.g. "claude-code", "codex"). Used as sender_ai on messages so other agents know who sent them.'),
   }, async ({ token, agent_name }) => {
     const config = getConfig();
     const userId = verifyToken(token, config.session.secret, config.session.tokenTtlMs);
@@ -107,6 +168,9 @@ export function createMcpServer(): McpServer {
     metadata: z.record(z.unknown()).optional().describe('Extra metadata'),
   }, async ({ group_id, message, type, metadata }) => {
     const userId = auth.require();
+    // F-06: per-userId MCP-layer rate limit (60 msg/min).
+    const rl = checkMcpRateLimit('send_message');
+    if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
     const result = sendMessageToGroup(userId, {
       group_id, message, type, metadata,
       sender_ai: auth.agentName || undefined,
@@ -205,6 +269,9 @@ export function createMcpServer(): McpServer {
     group_id: z.string(),
   }, async ({ group_id }) => {
     const userId = auth.require();
+    // F-06: destructive op — tight per-userId cap (10/min).
+    const rl = checkMcpRateLimit('clear_local_messages');
+    if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
     if (!isGroupMember(userId, group_id)) return { content: [{ type: 'text', text: '❌ Not a member' }], isError: true };
     const cleared = await clearGroup(group_id);
     return { content: [{ type: 'text', text: cleared ? `✅ Local messages cleared for group ${group_id}` : 'No local messages found.' }] };
@@ -217,6 +284,9 @@ export function createMcpServer(): McpServer {
     group_type: z.enum(['team', 'project', 'open']).optional().default('team'),
   }, async ({ name, description, group_type }) => {
     const userId = auth.require();
+    // F-06: 10 groups/hour per user.
+    const rl = checkMcpRateLimit('create_group');
+    if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
     const result = createNewGroup(userId, { name, description, group_type });
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
     return { content: [{ type: 'text', text: `✅ Group "${name}" created!\nID: ${result.data.id}\nInvite code: ${result.data.invite_code}` }] };
@@ -227,6 +297,9 @@ export function createMcpServer(): McpServer {
     invite_code: z.string(),
   }, async ({ invite_code }) => {
     const userId = auth.require();
+    // F-06: 10 joins/5min per user.
+    const rl = checkMcpRateLimit('join_group');
+    if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
     const result = requestJoinGroup(userId, invite_code);
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
     return { content: [{ type: 'text', text: `📨 Join request sent. Waiting for admin approval.` }] };
@@ -238,6 +311,9 @@ export function createMcpServer(): McpServer {
     approve: z.boolean(),
   }, async ({ request_id, approve }) => {
     const userId = auth.require();
+    // F-06: 30/min per user.
+    const rl = checkMcpRateLimit('approve_join');
+    if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
     const result = respondToJoinRequest(userId, request_id, approve);
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
     return { content: [{ type: 'text', text: approve ? '✅ Approved' : '❌ Rejected' }] };
@@ -318,6 +394,9 @@ export function createMcpServer(): McpServer {
     group_id: z.string(),
   }, async ({ group_id }) => {
     const userId = auth.require();
+    // F-06: destructive op — 10/min per user.
+    const rl = checkMcpRateLimit('leave_group');
+    if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
     const result = await leaveGroup(userId, group_id);
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
     return { content: [{ type: 'text', text: '✅ Left group' }] };
@@ -330,6 +409,9 @@ export function createMcpServer(): McpServer {
     details: z.string().max(4000).optional(),
   }, async ({ group_id, action, details }) => {
     const userId = auth.require();
+    // F-06: 20/min per user.
+    const rl = checkMcpRateLimit('submit_approval');
+    if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
     const result = submitApproval(userId, { group_id, action, details });
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
     return { content: [{ type: 'text', text: `⏳ Submitted (id: ${result.data.id}). Waiting for admin approval.` }] };
@@ -342,6 +424,9 @@ export function createMcpServer(): McpServer {
     reason: z.string().max(2000).optional(),
   }, async ({ approval_id, approve, reason }) => {
     const userId = auth.require();
+    // F-06: 30/min per user.
+    const rl = checkMcpRateLimit('respond_approval');
+    if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
     const result = respondToApproval(userId, approval_id, approve, reason);
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
     return { content: [{ type: 'text', text: approve ? '✅ Approved' : '❌ Rejected' }] };
@@ -443,7 +528,7 @@ export function createMcpServer(): McpServer {
 // We now bring up the DB schema + NATS relay here, matching the HTTP server.
 export async function startStdio() {
   // 1. DB schema (cheap if already set up; idempotent)
-  try { setupSchema(); } catch (e) { process.stderr.write(`[mcp] DB setup failed: ${e}\n`); }
+  try { setupSchema(); } catch (e) { mcpLog(`DB setup failed: ${isProd ? 'see server logs' : e}`); }
 
   // 2. Token blacklist cleanup (idempotent; unref'd timer)
   scheduleBlacklistCleanup();
@@ -455,15 +540,15 @@ export async function startStdio() {
   //    crashing on the first getRelay() call.
   try {
     await connectRelay();
-    process.stderr.write('[mcp] NATS relay connected\n');
+    mcpLog('NATS relay connected');
   } catch (e) {
-    process.stderr.write(`[mcp] NATS relay unavailable — relay tools will fail: ${e}\n`);
+    mcpLog(`NATS relay unavailable — relay tools will fail: ${isProd ? 'connection refused' : e}`);
   }
 
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  process.stderr.write('[mcp] AI Mesh MCP (stdio) running\n');
+  mcpLog('AI Mesh MCP (stdio) running');
 
   // Graceful shutdown — close NATS on exit.
   process.on('SIGTERM', async () => { try { await disconnectRelay(); } catch {} process.exit(0); });
@@ -473,13 +558,13 @@ export async function startStdio() {
 // ─── Start: HTTP/SSE mode (per-connection server instances for isolation) ───
 export async function startHttp(port: number = 3738) {
   // Same wiring as startStdio — DB + relay must be up before serving requests.
-  try { setupSchema(); } catch (e) { process.stderr.write(`[mcp] DB setup failed: ${e}\n`); }
+  try { setupSchema(); } catch (e) { mcpLog(`DB setup failed: ${isProd ? 'see server logs' : e}`); }
   scheduleBlacklistCleanup();
   try {
     await connectRelay();
-    process.stderr.write('[mcp] NATS relay connected\n');
+    mcpLog('NATS relay connected');
   } catch (e) {
-    process.stderr.write(`[mcp] NATS relay unavailable — relay tools will fail: ${e}\n`);
+    mcpLog(`NATS relay unavailable — relay tools will fail: ${isProd ? 'connection refused' : e}`);
   }
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || '', `http://localhost:${port}`);
@@ -519,7 +604,7 @@ export async function startHttp(port: number = 3738) {
           return;
         }
       } catch (err) {
-        process.stderr.write(`[mcp] Error: ${err}\n`);
+        mcpLog(`Error: ${isProd ? 'internal error' : err}`);
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Internal server error' }));
@@ -537,7 +622,7 @@ export async function startHttp(port: number = 3738) {
   });
 
   httpServer.listen(port, () => {
-    process.stderr.write(`[mcp] AI Mesh MCP (HTTP/SSE) running on :${port}\n`);
+    mcpLog(`AI Mesh MCP (HTTP/SSE) running on :${port}`);
   });
 
   process.on('SIGTERM', () => httpServer.close());

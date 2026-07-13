@@ -104,10 +104,23 @@ export function getConfig(): AppConfig {
     },
   };
 
-  // Validate critical config in production
+  // ─── Critical config validation (ALL modes) ───
+  // F-08 fix: previously the dev-default SESSION_SECRET check was gated behind
+  // NODE_ENV === 'production'. A misconfigured prod deploy that accidentally set
+  // NODE_ENV=development (or unset it) would silently run with the known public
+  // default secret, making every issued token forgeable by anyone who read the
+  // source. We now refuse to start in ANY mode if the secret is the known dev
+  // default. The length check stays production-only (devs may want a short
+  // secret for local testing).
+  if (config.session.secret === 'dev-secret-change-me') {
+    throw new Error(
+      'SESSION_SECRET is the known dev default. Set a real secret via env (use: openssl rand -hex 32). ' +
+      'This check fires in every NODE_ENV so a misconfigured production deploy cannot silently run with a forgeable secret.'
+    );
+  }
   if (nodeEnv === 'production') {
-    if (config.session.secret === 'dev-secret-change-me' || config.session.secret.length < 32) {
-      throw new Error('SESSION_SECRET must be set in production and be at least 32 chars (use: openssl rand -hex 32)');
+    if (config.session.secret.length < 32) {
+      throw new Error('SESSION_SECRET must be at least 32 chars in production (use: openssl rand -hex 32)');
     }
     if (!config.github.clientId || !config.github.clientSecret) {
       console.warn('[config] GitHub OAuth not configured — auth will not work');
