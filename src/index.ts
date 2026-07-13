@@ -91,9 +91,12 @@ async function main() {
   // ─── Static UI (cached at startup — was readFileSync on every request) ───
   const { readFileSync, existsSync } = await import('node:fs');
   const { resolve } = await import('node:path');
+  // Prefer root public/ (Docker copies this). Fall back to src/public/ for dev.
   const htmlPath = resolve(process.cwd(), 'public', 'index.html');
   const fallbackPath = new URL('../public/index.html', import.meta.url);
-  const indexHtml = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf-8') : readFileSync(fallbackPath, 'utf-8');
+  const usedPath = existsSync(htmlPath) ? htmlPath : fallbackPath;
+  const indexHtml = readFileSync(usedPath, 'utf-8');
+  app.log.info(`Serving landing from: ${usedPath.toString()}`);
 
   app.get('/', async (_req, reply) => {
     reply.type('text/html').send(indexHtml);
