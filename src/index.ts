@@ -36,11 +36,20 @@ async function main() {
   setupSchema();
 
   // ─── Fastify App ───
+  // F-03 fix: trustProxy lets Fastify consistently parse X-Forwarded-For when
+  // running behind a reverse proxy (nginx, Cloudflare, Railway, etc.). Without
+  // this, req.ip falls back to the proxy's IP for EVERY request, defeating
+  // per-IP rate limits. With trustProxy=true, Fastify walks the XFF chain from
+  // the right and skips the first untrusted hop — for single-proxy setups this
+  // is exactly the client IP. For multi-hop chains, set TRUST_PROXY_HOPS env to
+  // limit how many hops to trust (TODO — current setup assumes one trusted proxy).
+  const trustProxy = process.env.TRUST_PROXY === 'true' || config.server.nodeEnv === 'production';
   const app = Fastify({
     logger: {
       level: config.server.nodeEnv === 'production' ? 'info' : 'debug',
     },
     bodyLimit: 1048576, // 1MB max body size
+    trustProxy,
   });
 
   // ─── Error Handler ───
@@ -101,20 +110,27 @@ async function main() {
   });
 
   // ─── API Info ───
-  app.get('/api', async () => ({
-    name: 'AI Mesh',
-    description: 'AI-to-AI communication mesh',
-    version: '1.0.0',
-    endpoints: {
-      auth: '/auth/github',
-      groups: '/groups',
-      messages: '/messages',
-      inbox: '/messages/inbox',
-      websocket: '/ws',
-      health: '/health',
-      logs: '/logs',
-    },
-  }));
+  // F-09 mitigation: route enumeration is acceptable for a dev-friendly API,
+  // but the response should not be cached by intermediate proxies (it leaks
+  // the route map to anyone who can read cache logs). no-store ensures the
+  // response is fresh per request and never persisted by shared caches.
+  app.get('/api', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return {
+      name: 'AI Mesh',
+      description: 'AI-to-AI communication mesh',
+      version: '1.0.0',
+      endpoints: {
+        auth: '/auth/github',
+        groups: '/groups',
+        messages: '/messages',
+        inbox: '/messages/inbox',
+        websocket: '/ws',
+        health: '/health',
+        logs: '/logs',
+      },
+    };
+  });
 
   // ─── Register Block Routes ───
   // Each block registers its own routes + health check

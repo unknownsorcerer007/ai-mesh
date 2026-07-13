@@ -198,6 +198,28 @@ export function setupSchema() {
       PRIMARY KEY (key, window_start)
     );
     CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
+
+    -- F-01 fix: auth-specific failure tracking + exponential backoff.
+    -- auth_failures counts failed login attempts per key (accountKey if known,
+    -- else ipKey) within a 15-minute window. recordAuthFailure() increments it
+    -- and computes the next backoff_until timestamp using base * 2^(failures - max).
+    CREATE TABLE IF NOT EXISTS auth_failures (
+      key TEXT NOT NULL,
+      window_start INTEGER NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (key, window_start)
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_failures_window ON auth_failures(window_start);
+
+    -- auth_backoff stores the "no auth attempts allowed until this timestamp"
+    -- value for a key. Cleared on successful auth (recordAuthSuccess) so a
+    -- legitimate user who fat-fingered their password isn't penalized after
+    -- they get it right.
+    CREATE TABLE IF NOT EXISTS auth_backoff (
+      key TEXT PRIMARY KEY,
+      backoff_until INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_backoff_until ON auth_backoff(backoff_until);
   `);
 
   return db;
