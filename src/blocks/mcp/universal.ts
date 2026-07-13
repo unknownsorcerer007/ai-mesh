@@ -23,9 +23,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { getDb } from '../../shared/db.js';
+import { getDb, setupSchema } from '../../shared/db.js';
 import { getConfig } from '../../core/config.js';
-import { verifyToken, checkRateLimit } from '../security/index.js';
+import { verifyToken, checkRateLimit, scheduleBlacklistCleanup } from '../security/index.js';
+import { connectRelay, disconnectRelay } from '../relay/index.js';
 import { toHuman, translateType } from '../../shared/translate.js';
 import { getPendingMessages, getAllPendingMessages, ensureConsumer, getPendingCount } from '../relay/index.js';
 import { logMessage } from '../logs/index.js';
@@ -433,15 +434,53 @@ export function createMcpServer(): McpServer {
 }
 
 // ─── Start: stdio mode ───
+// The standalone MCP binary (ai-mesh-mcp / dist/blocks/mcp/entry.js) is the
+// thing the README tells Claude Code / OpenClaw / Codex to run. Unlike the HTTP
+// server (src/index.ts), this entry point used to skip connectRelay() entirely
+// — so every relay-dependent tool (send_message, receive_messages,
+// check_messages, watch_messages, get_group_history) failed with
+// "Relay unavailable" and the core AI-to-AI chat feature was dead on arrival.
+// We now bring up the DB schema + NATS relay here, matching the HTTP server.
 export async function startStdio() {
+  // 1. DB schema (cheap if already set up; idempotent)
+  try { setupSchema(); } catch (e) { process.stderr.write(`[mcp] DB setup failed: ${e}\n`); }
+
+  // 2. Token blacklist cleanup (idempotent; unref'd timer)
+  scheduleBlacklistCleanup();
+
+  // 3. NATS relay — REQUIRED for every relay-dependent tool. Best-effort: if
+  //    NATS is down the MCP server still starts (tools that don't need the
+  //    relay — connect, read_local_messages, local_storage_stats — still work),
+  //    but relay tools will return "Relay unavailable" cleanly instead of
+  //    crashing on the first getRelay() call.
+  try {
+    await connectRelay();
+    process.stderr.write('[mcp] NATS relay connected\n');
+  } catch (e) {
+    process.stderr.write(`[mcp] NATS relay unavailable — relay tools will fail: ${e}\n`);
+  }
+
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write('[mcp] AI Mesh MCP (stdio) running\n');
+
+  // Graceful shutdown — close NATS on exit.
+  process.on('SIGTERM', async () => { try { await disconnectRelay(); } catch {} process.exit(0); });
+  process.on('SIGINT', async () => { try { await disconnectRelay(); } catch {} process.exit(0); });
 }
 
 // ─── Start: HTTP/SSE mode (per-connection server instances for isolation) ───
 export async function startHttp(port: number = 3738) {
+  // Same wiring as startStdio — DB + relay must be up before serving requests.
+  try { setupSchema(); } catch (e) { process.stderr.write(`[mcp] DB setup failed: ${e}\n`); }
+  scheduleBlacklistCleanup();
+  try {
+    await connectRelay();
+    process.stderr.write('[mcp] NATS relay connected\n');
+  } catch (e) {
+    process.stderr.write(`[mcp] NATS relay unavailable — relay tools will fail: ${e}\n`);
+  }
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || '', `http://localhost:${port}`);
 

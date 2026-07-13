@@ -70,24 +70,36 @@ export function requestJoinGroup(userId: string, inviteCode: string): OpResult<{
   const existing = db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?').get(group.id, userId);
   if (existing) return err('ALREADY_MEMBER', 'Already a member', 409);
 
+  // The join_requests table has UNIQUE(group_id, user_id) with no status
+  // distinction. A bare INSERT used to fail with SQLITE_CONSTRAINT_UNIQUE if a
+  // previous request row existed — even after the user left the group (the old
+  // 'approved'/'rejected' row stayed), locking them out forever with a
+  // misleading 'REQUEST_PENDING' error. Upsert instead: re-activate any
+  // existing row to 'pending' (the admin gets a fresh notification), or insert
+  // a new one. This makes join → approve → leave → rejoin work.
   const requestId = nanoid();
-  try {
-    db.prepare('INSERT INTO join_requests (id, group_id, user_id, status) VALUES (?,?,?,?)')
-      .run(requestId, group.id, userId, 'pending');
-  } catch (e: any) {
-    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || e.message?.includes('UNIQUE')) {
-      return err('REQUEST_PENDING', 'Join request already pending', 409);
-    }
-    throw e;
+  const info = db.prepare(
+    `INSERT INTO join_requests (id, group_id, user_id, status) VALUES (?,?,?,?)
+     ON CONFLICT(group_id, user_id) DO UPDATE SET status='pending', created_at=datetime('now')`
+  ).run(requestId, group.id, userId, 'pending');
+
+  // If the upsert updated an existing row (changes=1 but it was an UPDATE, not
+  // INSERT), reuse the existing id so the admin's notification references a
+  // real request. We detect "was an update" by checking if our generated id
+  // was actually inserted.
+  let actualRequestId = requestId;
+  if (info.changes > 0) {
+    const row = db.prepare('SELECT id FROM join_requests WHERE group_id = ? AND user_id = ?').get(group.id, userId) as { id: string } | undefined;
+    if (row) actualRequestId = row.id;
   }
 
   notifyUserEverywhere(group.admin_id, {
     type: 'join_request',
-    payload: { request_id: requestId, group_id: group.id, group_name: group.name },
+    payload: { request_id: actualRequestId, group_id: group.id, group_name: group.name },
     timestamp: new Date().toISOString(),
   });
 
-  return ok({ request_id: requestId, group_id: group.id });
+  return ok({ request_id: actualRequestId, group_id: group.id });
 }
 
 // ─── Domain: Respond to Join Request (admin only) ───

@@ -510,9 +510,19 @@ ${C.bold}Status:${C.reset}
 
     case '/quit':
     case '/q':
-      ws?.close();
+      // Await the WebSocket close before exiting. Calling ws?.close() and then
+      // process.exit(0) synchronously races libuv's handle teardown — on
+      // Windows this reproduces a UV_HANDLE_CLOSING assertion crash. Letting
+      // the close event resolve first (or timing out after 500ms) avoids it.
       console.log(`${C.dim}Bye! 👋${C.reset}`);
-      process.exit(0);
+      if (ws && ws.readyState === 1 /* OPEN */) {
+        const exitTimer = setTimeout(() => process.exit(0), 500);
+        ws.on('close', () => { clearTimeout(exitTimer); process.exit(0); });
+        ws.close();
+      } else {
+        process.exit(0);
+      }
+      return;
 
     default:
       if (cmd.startsWith('/')) {
