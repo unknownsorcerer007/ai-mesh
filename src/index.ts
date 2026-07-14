@@ -39,11 +39,17 @@ async function main() {
   // F-03 fix: trustProxy lets Fastify consistently parse X-Forwarded-For when
   // running behind a reverse proxy (nginx, Cloudflare, Railway, etc.). Without
   // this, req.ip falls back to the proxy's IP for EVERY request, defeating
-  // per-IP rate limits. With trustProxy=true, Fastify walks the XFF chain from
-  // the right and skips the first untrusted hop — for single-proxy setups this
-  // is exactly the client IP. For multi-hop chains, set TRUST_PROXY_HOPS env to
-  // limit how many hops to trust (TODO — current setup assumes one trusted proxy).
-  const trustProxy = process.env.TRUST_PROXY === 'true' || config.server.nodeEnv === 'production';
+  // per-IP rate limits.
+  //
+  // M1 fix: previously this was `true` in production by default, which trusts
+  // ALL proxies unconditionally. If the server is deployed directly on the
+  // internet (no reverse proxy), an attacker can spoof X-Forwarded-For to
+  // bypass every per-IP rate limit. Now trustProxy is opt-in: the deployer
+  // sets TRUST_PROXY=true explicitly when they know they're behind a proxy.
+  // For multi-hop chains, set TRUST_PROXY_HOPS=N to trust exactly N hops.
+  const trustProxy = process.env.TRUST_PROXY === 'true'
+    ? (process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : true)
+    : false;
   const app = Fastify({
     logger: {
       level: config.server.nodeEnv === 'production' ? 'info' : 'debug',

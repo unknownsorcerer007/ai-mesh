@@ -205,6 +205,12 @@ function connectWs(state: ChatState) {
 }
 
 // ─── API Helpers ───
+// M5 fix: the original api() returned res.json() without checking res.ok.
+// On 401 (bad token) /auth/me returned {error:"UNAUTHORIZED"} — not a User —
+// so state.username became undefined and state.groups became {error:...} (an
+// object, not the array render() expects), crashing with
+// "TypeError: state.groups is not iterable". Now we throw on non-2xx so the
+// caller's catch block handles it cleanly.
 async function api(path: string, options: RequestInit = {}, state: ChatState): Promise<any> {
   const res = await fetch(`${SERVER_URL}${path}`, {
     ...options,
@@ -214,6 +220,10 @@ async function api(path: string, options: RequestInit = {}, state: ChatState): P
       ...options.headers,
     },
   });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || body.message || `HTTP ${res.status}`);
+  }
   return res.json();
 }
 
@@ -570,15 +580,29 @@ async function main() {
   try {
     const user = await api('/auth/me', {}, state);
     state.username = user.username;
-  } catch {
-    console.log(`${C.red}Invalid token or server unreachable${C.reset}`);
+  } catch (err: any) {
+    // M5 fix: distinguish "server down" from "bad token" so the user knows
+    // what to fix. Token issues are common (TUI was started without setting
+    // AI_MESH_TOKEN); server-down is a deployment issue.
+    const msg = err?.message || '';
+    if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED')) {
+      console.log(`${C.red}Server unreachable at ${SERVER_URL}${C.reset}`);
+      console.log(`${C.dim}Start the server first: cd ai-mesh && ./start.sh${C.reset}`);
+    } else {
+      console.log(`${C.red}Invalid token: ${msg}${C.reset}`);
+      console.log(`${C.dim}Get a fresh token from ${SERVER_URL} and: export AI_MESH_TOKEN=<token>${C.reset}`);
+    }
     process.exit(1);
   }
 
   // Fetch groups
   try {
     state.groups = await api('/groups', {}, state);
-  } catch {}
+  } catch {
+    // M5 fix: default to empty array so render() doesn't crash if /groups 401s
+    // (e.g. token revoked between /auth/me and /groups).
+    state.groups = [];
+  }
 
   // Fetch notifications
   try {

@@ -22,5 +22,7 @@ declare module '@modelcontextprotocol/sdk/server/streamableHttp.js' {
   export class StreamableHTTPServerTransport {
     constructor(opts: { sessionIdGenerator?: unknown });
     handleRequest(req: unknown, res: unknown): Promise<void>;
+    onclose?: (() => void) | undefined;
+    sessionId?: string;
   }
 }

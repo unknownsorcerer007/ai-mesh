@@ -19,8 +19,25 @@ const sc = StringCodec();
 const activeConsumers = new Map<string, { groupId: string; userId: string; createdAt: number }>();
 const CONSUMER_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// M3 fix: nanoid's default alphabet includes '_' and '-', so a durable name
+// formatted as `mesh_${userId}_${groupId}` is ambiguous — `mesh_a_b_c` could
+// be userId="a_b", groupId="c" OR userId="a", groupId="b_c". The original
+// greedy regex `/^mesh_(.+)_(.+)$/` always took the last underscore as the
+// split, so users with `_` in their nanoid got their consumers mapped to the
+// wrong userId/groupId in `syncConsumersFromNats` and `removeUserConsumers`.
+// Fix: use `:` as the delimiter — nanoid never produces it, and groupIdSchema
+// (`^[a-zA-Z0-9_-]+$`) rejects it on the groupId side too.
+const DURABLE_SEP = ':';
 function durableName(userId: string, groupId: string): string {
-  return `mesh_${userId}_${groupId}`;
+  return `mesh${DURABLE_SEP}${userId}${DURABLE_SEP}${groupId}`;
+}
+
+// Inverse — split a durable name back to {userId, groupId}. Returns null if
+// the format doesn't match (e.g. legacy name from before this fix).
+function parseDurableName(durable: string): { userId: string; groupId: string } | null {
+  const m = durable.match(/^mesh:([^:]+):([^:]+)$/);
+  if (!m) return null;
+  return { userId: m[1], groupId: m[2] };
 }
 
 export async function ensureConsumer(groupId: string, userId: string): Promise<string> {
@@ -57,13 +74,16 @@ export async function syncConsumersFromNats(): Promise<number> {
     // The nats Lister is async-iterable directly.
     for await (const info of lister) {
       const durable = info.name;
-      // Durable name format: mesh_{userId}_{groupId}
-      const m = durable.match(/^mesh_(.+)_(.+)$/);
-      if (m) {
+      const parsed = parseDurableName(durable);
+      if (parsed) {
         const created = info.created ? new Date(info.created).getTime() : Date.now();
-        activeConsumers.set(durable, { groupId: m[2], userId: m[1], createdAt: created });
+        activeConsumers.set(durable, { groupId: parsed.groupId, userId: parsed.userId, createdAt: created });
         count++;
       }
+      // ponytail: legacy durable names from before M3 fix won't match
+      // parseDurableName — they'll be cleaned up by cleanupExpiredConsumers
+      // when their CONSUMER_MAX_AGE_MS expires. No data loss: the messages
+      // stay in the stream until max_age (7d) regardless.
     }
     return count;
   } catch {

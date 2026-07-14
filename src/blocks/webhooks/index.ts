@@ -109,17 +109,40 @@ export function registerWebhookRoutes(app: FastifyInstance) {
   // Capture the RAW body for webhook signature verification. Fastify's default
   // JSON parser parses into an object, which means re-serializing for HMAC
   // produces different bytes than GitHub signed — legitimate webhooks failed.
-  // We override the parser to store the raw Buffer on req.rawBody AND populate
-  // req.body with the parsed JSON (so source parsers still work).
+  //
+  // M4 fix: the original addContentTypeParser override was GLOBAL — every
+  // application/json route in the app got the raw buffer captured (waste of
+  // memory on /messages etc.) and malformed JSON was silently turned into
+  // `null` instead of a 400 (confusing Zod errors). Now we scope the override:
+  // only `/webhook/:token` gets rawBody capture + null-on-malformed. Every
+  // other route uses Fastify's default JSON parser (which 400s on bad JSON).
+  // ponytail: req.url is set pre-parse, no need for routeOptions.
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
-    (req as FastifyRequest).rawBody = body as Buffer;
+    const isWebhookRoute = (req.url || '').startsWith('/webhook/');
+    if (isWebhookRoute) {
+      (req as FastifyRequest).rawBody = body as Buffer;
+      try {
+        const parsed = body.length === 0 ? {} : JSON.parse(body.toString('utf-8'));
+        done(null, parsed);
+      } catch {
+        // Webhooks: keep raw body even if JSON malformed (some senders send
+        // invalid JSON). Store null so the route can decide.
+        done(null, null);
+      }
+      return;
+    }
+    // Non-webhook routes: default JSON parse, 400 on malformed.
     try {
       const parsed = body.length === 0 ? {} : JSON.parse(body.toString('utf-8'));
       done(null, parsed);
     } catch (err: any) {
-      // For webhooks we want the raw body even if JSON is malformed (some
-      // senders send invalid JSON). Store null so the route can decide.
-      done(null, null);
+      // Fastify wraps parser errors as 400 Bad Request when thrown via done(err).
+      // The error handler in core/errors.ts then maps unknown errors to 500 —
+      // but Fastify's built-in body-parser error has statusCode=400 set, so it
+      // passes through correctly. ponytail: throw the standard way.
+      const e = new Error(err.message) as Error & { statusCode?: number };
+      e.statusCode = 400;
+      done(e, undefined);
     }
   });
 

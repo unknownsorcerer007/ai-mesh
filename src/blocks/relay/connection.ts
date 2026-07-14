@@ -15,13 +15,69 @@ export async function connectRelay(): Promise<NatsConnection> {
 
   const config = getConfig();
 
-  nc = await connect({
-    servers: config.nats.url,
-    maxReconnectAttempts: -1,
-    reconnectTimeWait: 2000,
-    pingInterval: 30000,
-    timeout: 10000,
-  });
+  // M2 fix: the original connect() threw on initial failure and the caller
+  // gave up forever. The nats library's auto-reconnect only fires AFTER the
+  // first connect succeeds, so we do a few quick retries ourselves. If all
+  // fail, we return null and a background loop keeps trying — server keeps
+  // serving routes that don't need the relay, and relay tools come back
+  // online the moment NATS does. ponytail: stdlib only, no new dep.
+  const ATTEMPTS = 3;
+  for (let i = 1; i <= ATTEMPTS; i++) {
+    try {
+      nc = await connect({
+        servers: config.nats.url,
+        maxReconnectAttempts: -1,
+        reconnectTimeWait: 2000,
+        pingInterval: 30000,
+        timeout: 10000,
+      });
+      break;
+    } catch (err) {
+      if (i === ATTEMPTS) {
+        console.warn(`[relay] NATS connect failed after ${ATTEMPTS} attempts — scheduling background retry:`, (err as Error).message);
+        scheduleBackgroundReconnect(config.nats.url);
+        return null as any; // callers check isRelayConnected(); getRelay() throws if null
+      }
+      const wait = 1000 * i;
+      console.warn(`[relay] NATS connect attempt ${i}/${ATTEMPTS} failed, retry in ${wait}ms:`, (err as Error).message);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+
+  wireUpConnection();
+  return nc!;
+}
+
+// Background retry — fires every 5s until NATS comes back. unref'd so it
+// doesn't hold the process open on shutdown.
+let bgReconnectScheduled = false;
+function scheduleBackgroundReconnect(url: string) {
+  if (bgReconnectScheduled) return;
+  bgReconnectScheduled = true;
+  const timer = setInterval(async () => {
+    if (nc && !nc.isClosed()) return;
+    try {
+      console.info('[relay] background reconnect attempt...');
+      nc = await connect({
+        servers: url,
+        maxReconnectAttempts: -1,
+        reconnectTimeWait: 2000,
+        pingInterval: 30000,
+        timeout: 10000,
+      });
+      wireUpConnection();
+      console.info('[relay] NATS reconnected via background retry');
+    } catch (err) {
+      // swallow — try again next tick
+    }
+  }, 5000);
+  timer.unref();
+}
+
+// Shared post-connect setup: status monitor, js/jsm, streams, consumer sync.
+// ponytail: extracted so both code paths (initial connect + background reconnect) share it.
+function wireUpConnection() {
+  if (!nc) return;
 
   // Status monitoring
   (async () => {
@@ -40,31 +96,31 @@ export async function connectRelay(): Promise<NatsConnection> {
     }
   })();
 
-  js = nc.jetstream();
-  jsm = await nc.jetstreamManager();
-  await setupStreams(jsm);
+  (async () => {
+    try {
+      js = nc!.jetstream();
+      jsm = await nc!.jetstreamManager();
+      await setupStreams(jsm);
 
-  // Sync the in-memory consumer map from NATS (so a restart doesn't "forget"
-  // durable consumers that are still held server-side) and schedule periodic
-  // cleanup of expired ones.
-  try {
-    const { syncConsumersFromNats, scheduleConsumerCleanup } = await import('./consumers.js');
-    const synced = await syncConsumersFromNats();
-    if (synced > 0) console.info(`[relay] Synced ${synced} durable consumers from NATS`);
-    scheduleConsumerCleanup();
-  } catch (err) {
-    console.warn('[relay] Consumer sync failed:', err);
-  }
+      // Sync the in-memory consumer map from NATS (so a restart doesn't "forget"
+      // durable consumers that are still held server-side) and schedule periodic
+      // cleanup of expired ones.
+      const { syncConsumersFromNats, scheduleConsumerCleanup } = await import('./consumers.js');
+      const synced = await syncConsumersFromNats();
+      if (synced > 0) console.info(`[relay] Synced ${synced} durable consumers from NATS`);
+      scheduleConsumerCleanup();
+    } catch (err) {
+      console.warn('[relay] Post-connect setup failed:', err);
+    }
+  })();
 
-  // Register health check
+  // Register health check (idempotent — registerHealthCheck just overwrites)
   registerHealthCheck('relay', async (): Promise<BlockHealth> => {
     if (!nc || nc.isClosed()) {
       return { status: 'unhealthy', message: 'Not connected', lastCheck: '' };
     }
     return { status: 'healthy', message: `Connected to ${nc.getServer()}`, lastCheck: '' };
   });
-
-  return nc;
 }
 
 export function getRelay(): NatsConnection {

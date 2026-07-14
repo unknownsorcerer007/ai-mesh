@@ -56,6 +56,8 @@ export const submitApprovalSchema = z.object({
   group_id: groupIdSchema,
   action: z.string().min(1).max(200),
   details: z.string().max(4000).optional(),
+  action_type: z.enum(['read', 'write', 'delete', 'deploy', 'exec', 'config', 'other']).optional().default('other'),
+  severity: z.enum(['low', 'medium', 'high', 'critical']).optional().default('medium'),
 });
 
 export const respondApprovalSchema = z.object({

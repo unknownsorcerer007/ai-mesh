@@ -308,6 +308,48 @@ export function registerAuthRoutes(app: FastifyInstance) {
     return reply.send({ status: 'logged_out' });
   });
 
+  // ─── Register with username + optional password ───
+  // No GitHub OAuth required. Password is optional:
+  //   - With password: account is password-protected (production-grade)
+  //   - Without password: username-only (trusted environments only)
+  // Rate-limited per-IP to blunt enumeration / mass account creation.
+  app.post('/auth/register', async (req: FastifyRequest<{ Body: { username: string; password?: string } }>, reply) => {
+    const rl = checkRateLimit(`register:${ipKey(req)}`, 3600_000, 10); // 10/hour per IP
+    if (!rl.allowed) {
+      reply.header('Retry-After', Math.ceil((rl.resetAt - Date.now()) / 1000));
+      return reply.code(429).send({ error: 'RATE_LIMITED', message: 'Too many registrations from this IP' });
+    }
+
+    const { username, password } = req.body ?? {};
+    if (!username) return reply.code(400).send({ error: 'INVALID_REQUEST', message: 'username is required' });
+
+    const { registerUser } = await import('./username-auth.js');
+    const result = registerUser({ username, password });
+    if (!result.ok) return reply.code(result.status).send({ error: result.code, message: result.message });
+
+    return reply.code(201).send({
+      token: result.data.token,
+      user_id: result.data.user_id,
+      username: result.data.username,
+    });
+  });
+
+  // ─── Login with username + password ───
+  app.post('/auth/login', async (req: FastifyRequest<{ Body: { username: string; password?: string } }>, reply) => {
+    const { username, password } = req.body ?? {};
+    if (!username) return reply.code(400).send({ error: 'INVALID_REQUEST', message: 'username is required' });
+
+    const { loginUser } = await import('./username-auth.js');
+    const result = loginUser({ username, password });
+    if (!result.ok) return reply.code(result.status).send({ error: result.code, message: result.message });
+
+    return reply.send({
+      token: result.data.token,
+      user_id: result.data.user_id,
+      username: result.data.username,
+    });
+  });
+
   // ─── Login with GitHub PAT ───
   // Documented as a fallback for environments where the OAuth flow can't run
   // (headless servers, CI). F-01 + F-04 fix: per-IP + per-account (hashed PAT)

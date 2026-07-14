@@ -140,7 +140,7 @@ export function setupSchema() {
       requester_name TEXT NOT NULL,
       action TEXT NOT NULL,
       details TEXT DEFAULT '',
-      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'canceled', 'expired', 'executed')),
       resolved_at TEXT,
       resolved_by TEXT,
       reason TEXT,
@@ -222,5 +222,76 @@ export function setupSchema() {
     CREATE INDEX IF NOT EXISTS idx_auth_backoff_until ON auth_backoff(backoff_until);
   `);
 
+  // Run idempotent column migrations (SQLite ALTER TABLE ADD COLUMN is safe
+  // to retry via PRAGMA table_info check). ponytail: no separate migration
+  // runner — keep it inline with schema setup.
+  runMigrations(db);
+
   return db;
+}
+
+// ─── Migrations (idempotent column additions) ───
+// Each migration checks PRAGMA table_info before adding the column, so running
+// setupSchema() on an existing DB is safe at any version.
+function runMigrations(db: Database.Database) {
+  // M1: username+password auth — add password_hash column to users
+  const userCols = db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+  if (!userCols.find(c => c.name === 'password_hash')) {
+    db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
+  }
+
+  // M2: HITL workflow — add lifecycle fields to approvals
+  // States: pending → approved → executed
+  //         pending → rejected
+  //         pending → canceled (by requester or admin)
+  //         pending → expired (auto after expires_at)
+  const approvalCols = db.prepare('PRAGMA table_info(approvals)').all() as Array<{ name: string }>;
+  const apNames = new Set(approvalCols.map(c => c.name));
+  if (!apNames.has('action_type')) db.exec("ALTER TABLE approvals ADD COLUMN action_type TEXT DEFAULT 'other'");
+  if (!apNames.has('severity')) db.exec("ALTER TABLE approvals ADD COLUMN severity TEXT DEFAULT 'medium'");
+  if (!apNames.has('expires_at')) db.exec('ALTER TABLE approvals ADD COLUMN expires_at TEXT');
+  if (!apNames.has('executed_at')) db.exec('ALTER TABLE approvals ADD COLUMN executed_at TEXT');
+  if (!apNames.has('execution_result')) db.exec('ALTER TABLE approvals ADD COLUMN execution_result TEXT');
+  if (!apNames.has('canceled_at')) db.exec('ALTER TABLE approvals ADD COLUMN canceled_at TEXT');
+  if (!apNames.has('canceled_by')) db.exec('ALTER TABLE approvals ADD COLUMN canceled_by TEXT');
+
+  // M3: Recreate approvals table with updated CHECK constraint.
+  // SQLite ALTER TABLE can't modify a CHECK constraint — must recreate.
+  // We detect the old constraint by checking the schema SQL. Idempotent: if
+  // the constraint already allows the new states, this is a no-op.
+  const approvalSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='approvals'").get() as { sql: string } | undefined;
+  if (approvalSchema?.sql && !approvalSchema.sql.includes("'executed'")) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS approvals_new (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL,
+        requester_id TEXT NOT NULL,
+        requester_name TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'canceled', 'expired', 'executed')),
+        resolved_at TEXT,
+        resolved_by TEXT,
+        reason TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        action_type TEXT DEFAULT 'other',
+        severity TEXT DEFAULT 'medium',
+        expires_at TEXT,
+        executed_at TEXT,
+        execution_result TEXT,
+        canceled_at TEXT,
+        canceled_by TEXT,
+        FOREIGN KEY (requester_id) REFERENCES users(id)
+      );
+      INSERT INTO approvals_new (id, group_id, requester_id, requester_name, action, details, status, resolved_at, resolved_by, reason, created_at, action_type, severity, expires_at, executed_at, execution_result, canceled_at, canceled_by)
+      SELECT id, group_id, requester_id, requester_name, action, details, status, resolved_at, resolved_by, reason, created_at, action_type, severity, expires_at, executed_at, execution_result, canceled_at, canceled_by FROM approvals;
+      DROP TABLE approvals;
+      ALTER TABLE approvals_new RENAME TO approvals;
+      CREATE INDEX IF NOT EXISTS idx_approvals_group ON approvals(group_id, status);
+      CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+    `);
+  }
+
+  // Index for efficient expiry cleanup queries
+  db.exec("CREATE INDEX IF NOT EXISTS idx_approvals_expires ON approvals(status, expires_at) WHERE status = 'pending'");
 }

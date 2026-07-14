@@ -18,6 +18,7 @@
 //  - clear_local_messages now checks membership before deleting.
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
@@ -41,6 +42,13 @@ import {
 import { sendMessageToGroup } from '../messages/index.js';
 import { submitApproval, respondToApproval } from '../approval/index.js';
 import type { RelayMessage } from '../../shared/types.js';
+
+// M8 fix: HTTP-mode session map. Keyed by Mcp-Session-Id (sent by SDK in the
+// response to the first POST, echoed by the client on subsequent POSTs).
+// Each entry holds the per-session McpServer (with its own auth context) and
+// the StreamableHTTPServerTransport. ponytail: in-memory only — sessions are
+// lost on restart, which is fine for an MCP transport (clients reconnect).
+const sessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
 
 // F-07 fix: stricter schemas for the connect tool. Previously `token` had no
 // max length (a 10MB string would be passed to verifyToken, which base64-decodes
@@ -402,23 +410,28 @@ export function createMcpServer(): McpServer {
     return { content: [{ type: 'text', text: '✅ Left group' }] };
   });
 
-  // ─── submit_approval ───
-  server.tool('submit_approval', 'Submit an action for human approval', {
+  // ─── submit_approval (was submit_approval — now with action_type + severity) ───
+  // AI calls this BEFORE performing any action that could affect users, data,
+  // or external systems. Returns approval_id — poll check_approval_status to
+  // learn the outcome. Do NOT perform the action until status is 'approved'.
+  server.tool('submit_approval', 'Submit an action for human approval. Call BEFORE performing any action that affects users, data, or external systems. Poll check_approval_status to learn the outcome.', {
     group_id: z.string(),
     action: z.string().max(200),
     details: z.string().max(4000).optional(),
-  }, async ({ group_id, action, details }) => {
+    action_type: z.enum(['read', 'write', 'delete', 'deploy', 'exec', 'config', 'other']).optional().default('other'),
+    severity: z.enum(['low', 'medium', 'high', 'critical']).optional().default('medium'),
+  }, async ({ group_id, action, details, action_type, severity }) => {
     const userId = auth.require();
     // F-06: 20/min per user.
     const rl = checkMcpRateLimit('submit_approval');
     if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
-    const result = submitApproval(userId, { group_id, action, details });
+    const result = submitApproval(userId, { group_id, action, details, action_type, severity });
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
-    return { content: [{ type: 'text', text: `⏳ Submitted (id: ${result.data.id}). Waiting for admin approval.` }] };
+    return { content: [{ type: 'text', text: `⏳ Submitted (id: ${result.data.id}). Status: pending. Poll check_approval_status to learn the outcome. Do NOT perform the action until status is 'approved'.` }] };
   });
 
-  // ─── respond_approval (admin only, no self-approval) ───
-  server.tool('respond_approval', 'Approve or reject a pending approval (admin only, cannot self-approve)', {
+  // ─── respond_approval (admin only, no self-approval, race-safe) ───
+  server.tool('respond_approval', 'Approve or reject a pending approval (admin only, cannot self-approve, race-safe)', {
     approval_id: z.string(),
     approve: z.boolean(),
     reason: z.string().max(2000).optional(),
@@ -430,6 +443,62 @@ export function createMcpServer(): McpServer {
     const result = respondToApproval(userId, approval_id, approve, reason);
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
     return { content: [{ type: 'text', text: approve ? '✅ Approved' : '❌ Rejected' }] };
+  });
+
+  // ─── check_approval_status (NEW — AI polls this after submit_approval) ───
+  server.tool('check_approval_status', 'Check the status of a submitted approval. Returns: pending, approved, rejected, expired, canceled, executed. After status is "approved", you may perform the action. After performing it, call mark_approval_executed with the result.', {
+    approval_id: z.string(),
+  }, async ({ approval_id }) => {
+    auth.require();
+    const { getApproval } = await import('../approval/index.js');
+    const approval = getApproval(approval_id);
+    if (!approval) return { content: [{ type: 'text', text: '❌ Approval not found' }], isError: true };
+    const status = approval.status;
+    const summary = `Approval ${approval_id}\nStatus: ${status}\nAction: ${approval.action}\nSeverity: ${approval.severity}/${approval.action_type}`;
+    let extra = '';
+    if (status === 'rejected' && approval.reason) extra = `\nReason: ${approval.reason}`;
+    if (status === 'approved') extra = `\n✅ You may now perform the action. After performing it, call mark_approval_executed.`;
+    if (status === 'executed' && approval.execution_result) extra = `\nResult: ${approval.execution_result}`;
+    if (status === 'expired') extra = `\nExpired. Submit a new approval if still needed.`;
+    if (status === 'canceled') extra = `\nCanceled by: ${approval.canceled_by}`;
+    return { content: [{ type: 'text', text: summary + extra }] };
+  });
+
+  // ─── cancel_approval (requester or admin — NEW) ───
+  server.tool('cancel_approval', 'Cancel a pending or approved approval. Requester can cancel their own; admin can cancel any in their group.', {
+    approval_id: z.string(),
+  }, async ({ approval_id }) => {
+    const userId = auth.require();
+    const { cancelApproval } = await import('../approval/index.js');
+    const result = cancelApproval(userId, approval_id);
+    if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
+    return { content: [{ type: 'text', text: '✅ Canceled' }] };
+  });
+
+  // ─── mark_approval_executed (admin or requester — NEW) ───
+  // After performing an approved action, record the result. Completes the
+  // audit trail: pending → approved → executed.
+  server.tool('mark_approval_executed', 'Mark an approved action as executed, with a result note. Call this AFTER performing the action so the audit trail is complete.', {
+    approval_id: z.string(),
+    result: z.string().max(2000),
+  }, async ({ approval_id, result: executionResult }) => {
+    const userId = auth.require();
+    const { markExecuted } = await import('../approval/index.js');
+    const result = markExecuted(userId, approval_id, executionResult);
+    if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
+    return { content: [{ type: 'text', text: '✅ Marked as executed. Audit trail complete.' }] };
+  });
+
+  // ─── list_pending_approvals (admin — NEW) ───
+  server.tool('list_pending_approvals', 'List pending approvals in groups where you are admin. Use this to see what needs your attention.', {}, async () => {
+    const userId = auth.require();
+    const approvals = getDb().prepare(`
+      SELECT a.* FROM approvals a
+      JOIN group_members gm ON gm.group_id = a.group_id AND gm.user_id = ? AND gm.role = 'admin'
+      WHERE a.status = 'pending'
+      ORDER BY a.created_at ASC
+    `).all(userId);
+    return { content: [{ type: 'text', text: approvals.length ? JSON.stringify(approvals, null, 2) : 'No pending approvals in your groups.' }] };
   });
 
   // ─── check_messages (PEEK — no ack, no data loss) ───
@@ -589,18 +658,54 @@ export async function startHttp(port: number = 3738) {
     }
 
     if (url.pathname === '/mcp') {
-      // Per-connection server — isolates auth context between concurrent clients.
-      const mcpServer = createMcpServer();
+      // M8 fix: the original passed `sessionIdGenerator: undefined`, which
+      // means StreamableHTTPServerTransport creates a NEW transport + McpServer
+      // for every POST. So `connect` (POST 1) set auth on server A, but
+      // `send_message` (POST 2) created server B with no auth → "Not
+      // authenticated" error. Stateful tools were unusable over HTTP.
+      //
+      // Fix: generate a session ID (random), store the (server, transport)
+      // pair in a Map keyed by session ID, and reuse on subsequent requests.
+      // The client must send `Mcp-Session-Id` header (set by SDK on the
+      // initial response) to maintain affinity. ponytail: stdlib crypto only.
       try {
         if (req.method === 'GET') {
+          // SSE — long-lived connection, per-connection server is fine.
+          const mcpServer = createMcpServer();
           const transport = new SSEServerTransport('/mcp', res);
           await mcpServer.connect(transport);
           return;
         }
         if (req.method === 'POST') {
-          const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-          await mcpServer.connect(transport);
-          await transport.handleRequest(req, res);
+          const sessionId = req.headers['mcp-session-id'] as string | undefined;
+          let session = sessions.get(sessionId || '');
+          if (!session) {
+            // New session — create server + transport, store for reuse.
+            const mcpServer = createMcpServer();
+            const transport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => {
+                // Called once on first handleRequest; the returned ID is sent
+                // back to the client as Mcp-Session-Id header. We don't know
+                // it ahead of time, so we'll index the session by this ID
+                // after the first request via the onClose hook below.
+                return `sess_${randomBytes(16).toString('hex')}`;
+              },
+            });
+            const onClose = () => {
+              for (const [id, s] of sessions) if (s.transport === transport) sessions.delete(id);
+            };
+            transport.onclose = onClose;
+            session = { server: mcpServer, transport };
+            await mcpServer.connect(transport);
+            // Index by the real session ID after the first request.
+            // The transport sets `sessionId` after handleRequest; we re-index.
+            await transport.handleRequest(req, res);
+            const realId = (transport as any).sessionId;
+            if (realId) sessions.set(realId, session);
+            return;
+          }
+          // Existing session — reuse.
+          await session.transport.handleRequest(req, res);
           return;
         }
       } catch (err) {
