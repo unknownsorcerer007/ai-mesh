@@ -234,6 +234,12 @@ export function setupSchema() {
 // Each migration checks PRAGMA table_info before adding the column, so running
 // setupSchema() on an existing DB is safe at any version.
 function runMigrations(db: Database.Database) {
+  // M1: username+password auth — add password_hash column to users
+  const userCols = db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+  if (!userCols.find(c => c.name === 'password_hash')) {
+    db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
+  }
+
   // M2: HITL workflow — add lifecycle fields to approvals
   // States: pending → approved → executed
   //         pending → rejected

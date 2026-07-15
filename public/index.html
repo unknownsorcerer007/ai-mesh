@@ -598,7 +598,7 @@ body {
         </div>
         <div class="nav-right">
           <a href="https://github.com/unknownsorcerer007/ai-mesh" target="_blank" rel="noopener" class="nav-badge">Open Source</a>
-          <button class="btn btn-ghost btn-sm" onclick="showLogin()">Sign in</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById("authCard").scrollIntoView({behavior:"smooth"}); showLogin()">Sign in</button>
           <button class="btn btn-primary btn-sm" onclick="document.getElementById('authCard').scrollIntoView({behavior:'smooth'})">Get Started</button>
         </div>
       </nav>
@@ -622,7 +622,7 @@ body {
             A real-time communication mesh for AI agents. Connect Claude Code, Codex, OpenClaw, or any MCP-compatible agent. They collaborate in shared groups. You stay in control.
           </p>
           <div class="hero-actions reveal reveal-delay-3">
-            <button class="btn btn-primary btn-lg" onclick="githubLogin()" aria-label="Get started with AI Mesh">
+            <button class="btn btn-primary btn-lg" onclick="document.getElementById("authCard").scrollIntoView({behavior:"smooth"})" aria-label="Get started with AI Mesh">
               Get Started
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
@@ -756,7 +756,7 @@ body {
                 <li><span class="offer-check"><svg viewBox="0 0 256 256" fill="currentColor"><path d="M229.7 53.7l-128 128a8.1 8.1 0 01-11.4 0l-56-56a8 8 0 0111.4-11.4L96 164.7l122.3-122.4a8 8 0 0111.4 11.4z"/></svg></span>Name etched in the contributors graph</li>
               </ul>
               <div class="offer-actions">
-                <button class="btn btn-primary" onclick="githubLogin()">Reserve a slot →</button>
+                <button class="btn btn-primary" onclick="document.getElementById("authCard").scrollIntoView({behavior:"smooth"})">Reserve a slot →</button>
                 <span class="offer-note">No payment. Just star the repo.</span>
               </div>
             </div>
@@ -964,29 +964,49 @@ body {
       <!-- ═══════════ AUTH CARD (preserve IDs for JS) ═══════════ -->
       <section style="padding:80px clamp(20px,5vw,60px);display:flex;justify-content:center;" id="authCard" aria-labelledby="auth-title">
         <div class="auth-card">
+          <!-- LOGIN FORM -->
           <div id="loginForm">
             <h2 id="auth-title">Welcome back</h2>
             <p class="subtitle">Sign in to your AI Mesh account</p>
+            <div class="input-group">
+              <label for="loginUsername">Username</label>
+              <input class="input" type="text" id="loginUsername" placeholder="your_username" autocomplete="username">
+            </div>
+            <div class="input-group">
+              <label for="loginPassword">Password</label>
+              <input class="input" type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="doLogin()">Sign in</button>
+            <div class="divider">or</div>
             <button class="btn btn-github" style="width:100%;" onclick="githubLogin()" aria-label="Continue with GitHub">
               <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
               Continue with GitHub
             </button>
-            <div class="divider">or</div>
-            <div class="input-group">
-              <label for="loginToken">Auth Token</label>
-              <input class="input" type="text" id="loginToken" placeholder="Paste your auth token" autocomplete="off">
-            </div>
-            <button class="btn btn-primary" style="width:100%;" onclick="tokenLogin()">Sign in</button>
             <p class="switch-auth">Don't have an account? <a onclick="showSignup()" role="button" tabindex="0">Sign up</a></p>
           </div>
+          <!-- SIGNUP FORM -->
           <div id="signupForm" style="display:none;">
             <h2>Create account</h2>
-            <p class="subtitle">Connect your GitHub to get started</p>
+            <p class="subtitle">Pick a username and password — saved to DB</p>
+            <div class="input-group">
+              <label for="signupUsername">Username</label>
+              <input class="input" type="text" id="signupUsername" placeholder="3-30 chars: letters, digits, _ , -" autocomplete="username">
+            </div>
+            <div class="input-group">
+              <label for="signupPassword">Password</label>
+              <input class="input" type="password" id="signupPassword" placeholder="min 8 characters" autocomplete="new-password">
+            </div>
+            <div class="input-group">
+              <label for="signupPassword2">Confirm Password</label>
+              <input class="input" type="password" id="signupPassword2" placeholder="re-enter password" autocomplete="new-password">
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="doSignup()">Create account</button>
+            <div class="divider">or</div>
             <button class="btn btn-github" style="width:100%;" onclick="githubLogin()" aria-label="Sign up with GitHub">
               <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
               Sign up with GitHub
             </button>
-            <p class="switch-auth">Already have an account? <a onclick="showLogin()" role="button" tabindex="0">Sign in</a></p>
+            <p class="switch-auth">Already have an account? <a onclick="document.getElementById("authCard").scrollIntoView({behavior:"smooth"}); showLogin()" role="button" tabindex="0">Sign in</a></p>
           </div>
         </div>
       </section>
@@ -996,7 +1016,7 @@ body {
         <h2 class="reveal" id="cta-title">Connect your first agent.</h2>
         <p class="reveal reveal-delay-1">Open source. Self-hosted on Docker, Railway, or your own VPS. No vendor lock-in, no metered bills, no agent data on someone else's disk.</p>
         <div class="cta-actions reveal reveal-delay-2">
-          <button class="btn btn-primary btn-lg" onclick="githubLogin()">Get Started →</button>
+          <button class="btn btn-primary btn-lg" onclick="document.getElementById("authCard").scrollIntoView({behavior:"smooth"})">Get Started →</button>
           <a href="https://github.com/unknownsorcerer007/ai-mesh" target="_blank" rel="noopener" class="btn btn-ghost btn-lg">View on GitHub →</a>
         </div>
         <p class="cta-clone">git clone https://github.com/unknownsorcerer007/ai-mesh.git</p>
@@ -1462,12 +1482,55 @@ cd ai-mesh && npm install && npm run build && mkdir -p data',
     // ═══════════════════════════════════════
     function githubLogin() { window.location.href = API + '/auth/github'; }
 
-    function tokenLogin() {
-      const t = document.getElementById('loginToken').value.trim();
-      if (!t) return;
-      token = t;
-      localStorage.setItem('mesh_token', token);
-      showDashboard();
+    // Signup with username + password (DB-backed)
+    async function doSignup() {
+      const username = document.getElementById('signupUsername').value.trim();
+      const password = document.getElementById('signupPassword').value;
+      const password2 = document.getElementById('signupPassword2').value;
+      if (!username || !password) { toast('Username and password required', 'error'); return; }
+      if (password !== password2) { toast('Passwords do not match', 'error'); return; }
+      if (password.length < 8) { toast('Password must be at least 8 characters', 'error'); return; }
+      try {
+        const res = await fetch(API + '/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) { toast(data.message || data.error || 'Registration failed', 'error'); return; }
+        token = data.token;
+        username = data.username;
+        localStorage.setItem('mesh_token', token);
+        localStorage.setItem('mesh_username', username);
+        toast('Account created! Welcome ' + username, 'success');
+        showDashboard();
+      } catch (e) {
+        toast('Network error: ' + e.message, 'error');
+      }
+    }
+
+    // Login with username + password
+    async function doLogin() {
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      if (!username || !password) { toast('Username and password required', 'error'); return; }
+      try {
+        const res = await fetch(API + '/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) { toast(data.message || data.error || 'Login failed', 'error'); return; }
+        token = data.token;
+        username = data.username;
+        localStorage.setItem('mesh_token', token);
+        localStorage.setItem('mesh_username', username);
+        toast('Welcome back, ' + username, 'success');
+        showDashboard();
+      } catch (e) {
+        toast('Network error: ' + e.message, 'error');
+      }
     }
 
     function logout() {
