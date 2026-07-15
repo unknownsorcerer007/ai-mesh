@@ -166,7 +166,9 @@ export async function getPendingMessages(userId: string, groupId: string): Promi
 
   try {
     const consumer = await jetstream.consumers.get('MESH_MESSAGES', durable);
-    const fetched = await consumer.fetch({ max_messages: 100, expires: 500 });
+    // expires is in MILLISECONDS (per nats.js v2.29 types.d.ts line 255).
+    // 2s gives NATS enough time to deliver pending messages even under load.
+    const fetched = await consumer.fetch({ max_messages: 100, expires: 2000 });
 
     for await (const msg of fetched) {
       try {

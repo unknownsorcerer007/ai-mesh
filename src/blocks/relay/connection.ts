@@ -44,7 +44,7 @@ export async function connectRelay(): Promise<NatsConnection> {
     }
   }
 
-  wireUpConnection();
+  await wireUpConnection();
   return nc!;
 }
 
@@ -65,7 +65,7 @@ function scheduleBackgroundReconnect(url: string) {
         pingInterval: 30000,
         timeout: 10000,
       });
-      wireUpConnection();
+      await wireUpConnection();
       console.info('[relay] NATS reconnected via background retry');
     } catch (err) {
       // swallow — try again next tick
@@ -76,10 +76,12 @@ function scheduleBackgroundReconnect(url: string) {
 
 // Shared post-connect setup: status monitor, js/jsm, streams, consumer sync.
 // ponytail: extracted so both code paths (initial connect + background reconnect) share it.
-function wireUpConnection() {
+// MUST be awaited — js/jsm setup is async and callers (getJetStream/getJetStreamManager)
+// will throw "not initialized" if this hasn't completed.
+async function wireUpConnection() {
   if (!nc) return;
 
-  // Status monitoring
+  // Status monitoring (fire-and-forget — just logs)
   (async () => {
     for await (const status of nc!.status()) {
       switch (status.type) {
@@ -96,23 +98,22 @@ function wireUpConnection() {
     }
   })();
 
-  (async () => {
-    try {
-      js = nc!.jetstream();
-      jsm = await nc!.jetstreamManager();
-      await setupStreams(jsm);
+  // JetStream setup — MUST be awaited so js/jsm are ready before connectRelay() returns
+  try {
+    js = nc.jetstream();
+    jsm = await nc.jetstreamManager();
+    await setupStreams(jsm);
 
-      // Sync the in-memory consumer map from NATS (so a restart doesn't "forget"
-      // durable consumers that are still held server-side) and schedule periodic
-      // cleanup of expired ones.
-      const { syncConsumersFromNats, scheduleConsumerCleanup } = await import('./consumers.js');
-      const synced = await syncConsumersFromNats();
-      if (synced > 0) console.info(`[relay] Synced ${synced} durable consumers from NATS`);
-      scheduleConsumerCleanup();
-    } catch (err) {
-      console.warn('[relay] Post-connect setup failed:', err);
-    }
-  })();
+    // Sync the in-memory consumer map from NATS (so a restart doesn't "forget"
+    // durable consumers that are still held server-side) and schedule periodic
+    // cleanup of expired ones.
+    const { syncConsumersFromNats, scheduleConsumerCleanup } = await import('./consumers.js');
+    const synced = await syncConsumersFromNats();
+    if (synced > 0) console.info(`[relay] Synced ${synced} durable consumers from NATS`);
+    scheduleConsumerCleanup();
+  } catch (err) {
+    console.warn('[relay] Post-connect setup failed:', err);
+  }
 
   // Register health check (idempotent — registerHealthCheck just overwrites)
   registerHealthCheck('relay', async (): Promise<BlockHealth> => {

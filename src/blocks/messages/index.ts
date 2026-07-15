@@ -188,8 +188,14 @@ export function registerMessageRoutes(app: FastifyInstance) {
 
     if (req.query.group_id) {
       if (!groupIds.includes(req.query.group_id)) return reply.code(403).send({ error: 'NOT_A_MEMBER' });
+      // Ensure the durable consumer exists before fetching — without this,
+      // a user who never connected via WS (REST-only) has no consumer and
+      // getPendingMessages silently returns [].
+      await ensureConsumer(req.query.group_id, userId).catch(() => {});
       messages = await getPendingMessages(userId, req.query.group_id);
     } else {
+      // Ensure consumers for ALL the user's groups before bulk-fetching.
+      await Promise.allSettled(groupIds.map(gid => ensureConsumer(gid, userId)));
       messages = await getAllPendingMessages(userId, groupIds);
     }
 
