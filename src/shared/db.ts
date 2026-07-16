@@ -294,4 +294,13 @@ function runMigrations(db: Database.Database) {
 
   // Index for efficient expiry cleanup queries
   db.exec("CREATE INDEX IF NOT EXISTS idx_approvals_expires ON approvals(status, expires_at) WHERE status = 'pending'");
+
+  // M4: Email signups (newsletter / waitlist)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS email_signups (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
 }

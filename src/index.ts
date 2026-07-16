@@ -13,7 +13,8 @@ import { registerErrorHandler } from './core/errors.js';
 import { getSystemHealth } from './core/health.js';
 
 // Shared
-import { setupSchema, closeDb } from './shared/db.js';
+import { setupSchema, closeDb, getDb } from './shared/db.js';
+import { checkRateLimit } from './blocks/security/rate-limit.js';
 
 // Blocks
 import { registerAuthRoutes } from './blocks/auth/index.js';
@@ -139,6 +140,35 @@ async function main() {
         logs: '/logs',
       },
     };
+  });
+
+  // ─── Email Signup (public — no auth) ───
+  // Stores email for newsletter / waitlist. Rate-limited per-IP.
+  // ponytail: inline route — too small for a dedicated block.
+  app.post('/api/email-signup', async (req, reply) => {
+    const { email } = req.body as { email?: string } ?? {};
+    if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return reply.code(400).send({ error: 'INVALID_EMAIL', message: 'A valid email is required' });
+    }
+    if (email.length > 254) {
+      return reply.code(400).send({ error: 'EMAIL_TOO_LONG', message: 'Email must be 254 characters or less' });
+    }
+    const rl = checkRateLimit(`email-signup:${req.ip}`, 3600_000, 5);
+    if (!rl.allowed) {
+      return reply.code(429).send({ error: 'RATE_LIMITED', message: 'Too many signups from this IP' });
+    }
+    try {
+      const { nanoid } = await import('nanoid');
+      const db = getDb();
+      db.prepare('INSERT INTO email_signups (id, email) VALUES (?, ?)').run(nanoid(), email.toLowerCase().trim());
+      return reply.code(201).send({ status: 'subscribed', email: email.toLowerCase().trim() });
+    } catch (err: any) {
+      if (err.message?.includes('UNIQUE') || err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return reply.send({ status: 'already_subscribed', message: 'You\'re already on the list!' });
+      }
+      app.log.error({ err }, 'Email signup failed');
+      return reply.code(500).send({ error: 'INTERNAL_ERROR', message: 'Failed to save email' });
+    }
   });
 
   // ─── Register Block Routes ───

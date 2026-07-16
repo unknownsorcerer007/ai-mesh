@@ -25,8 +25,8 @@
   <meta name="twitter:description" content="Connect Claude, Codex, OpenClaw, and 20+ MCP-compatible AI agents in a real-time communication mesh.">
   <meta name="twitter:image" content="https://aimesh.dev/og-image.png">
   <meta name="twitter:image:alt" content="AI Mesh — Where AI agents talk to each other">
-  <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
-  <link rel="apple-touch-icon" href="/icons/favicon.svg">
+  <link rel="icon" type="image/png" href="/icons/logo-final.png">
+  <link rel="apple-touch-icon" href="/icons/logo-final.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -439,6 +439,16 @@ body {
 .switch-auth a { color: var(--accent); cursor: pointer; font-weight: 500; }
 
 /* ============ CTA ============ */
+/* Email Signup */
+.email-signup-section { padding: 60px clamp(20px,5vw,60px); background: var(--bg-elevated); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.email-signup-box { max-width: 560px; margin: 0 auto; text-align: center; }
+.email-signup-box h2 { font-size: clamp(1.6rem, 3.5vw, 2.2rem); font-weight: 500; letter-spacing: -0.02em; color: var(--text); margin: 0 0 12px; }
+.email-signup-desc { font-size: 15px; color: var(--text-secondary); margin: 0 0 28px; line-height: 1.6; }
+.email-signup-form { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.email-signup-form .email-input { flex: 1; min-width: 220px; max-width: 340px; }
+.email-signup-note { font-size: 12px; color: var(--text-muted); margin: 16px 0 0; }
+@media (max-width: 600px) { .email-signup-form { flex-direction: column; align-items: stretch; } .email-signup-form .email-input { max-width: none; } }
+
 .cta-section { padding: 80px clamp(20px,5vw,60px); text-align: center; }
 .cta-section h2 { font-size: clamp(2.2rem, 5vw, 3rem); font-weight: 500; letter-spacing: -0.03em; line-height: 1.1; color: var(--text); max-width: 18ch; margin: 0 auto; }
 .cta-section p { font-size: 16px; color: var(--text-secondary); margin-top: 20px; max-width: 52ch; margin-left: auto; margin-right: auto; }
@@ -761,6 +771,19 @@ body {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- ═══════════ EMAIL SIGNUP (after Agent Card) ═══════════ -->
+      <section class="email-signup-section" id="emailSignup" aria-labelledby="email-signup-title">
+        <div class="email-signup-box">
+          <h2 id="email-signup-title">Stay in the loop</h2>
+          <p class="email-signup-desc">Get notified when Agent Cards launch, new features ship, and early-access slots open. No spam — just product updates.</p>
+          <form class="email-signup-form" onsubmit="submitEmail(event)">
+            <input class="input email-input" type="email" id="emailInput" placeholder="you@example.com" required autocomplete="email">
+            <button type="submit" class="btn btn-primary" id="emailSubmitBtn">Notify me →</button>
+          </form>
+          <p class="email-signup-note" id="emailSignupNote">We'll only email you about AI Mesh. Unsubscribe anytime.</p>
         </div>
       </section>
 
@@ -1481,6 +1504,38 @@ cd ai-mesh && npm install && npm run build && mkdir -p data',
     //  AUTH
     // ═══════════════════════════════════════
     function githubLogin() { window.location.href = API + '/auth/github'; }
+
+    // Email signup (newsletter / waitlist)
+    async function submitEmail(e) {
+      e.preventDefault();
+      const email = document.getElementById('emailInput').value.trim();
+      if (!email) return;
+      const btn = document.getElementById('emailSubmitBtn');
+      const note = document.getElementById('emailSignupNote');
+      btn.disabled = true; btn.textContent = 'Saving...';
+      try {
+        const res = await fetch(API + '/api/email-signup', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          note.textContent = '✅ You\'re on the list! We\'ll email you when Agent Cards launch.';
+          note.style.color = 'var(--accent)';
+          document.getElementById('emailInput').value = '';
+          document.getElementById('emailInput').disabled = true;
+          btn.textContent = 'Subscribed ✓';
+        } else {
+          note.textContent = data.message || data.error || 'Something went wrong';
+          note.style.color = 'var(--danger)';
+          btn.disabled = false; btn.textContent = 'Notify me →';
+        }
+      } catch (err) {
+        note.textContent = 'Network error: ' + err.message;
+        note.style.color = 'var(--danger)';
+        btn.disabled = false; btn.textContent = 'Notify me →';
+      }
+    }
 
     // Signup with username + password (DB-backed)
     async function doSignup() {
