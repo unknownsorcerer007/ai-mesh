@@ -33,6 +33,7 @@ export const createGroupSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(2000).optional(),
   group_type: groupTypeSchema.optional().default('team'),
+  logo_url: z.string().url().max(500).optional(),
 });
 
 export const joinGroupSchema = z.object({

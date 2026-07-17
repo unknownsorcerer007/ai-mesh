@@ -37,6 +37,7 @@ export interface CreateGroupInput {
   name: string;
   description?: string;
   group_type?: 'team' | 'project' | 'open';
+  logo_url?: string;
 }
 
 export function createNewGroup(userId: string, input: CreateGroupInput): OpResult<{ id: string; invite_code: string }> {
@@ -49,8 +50,8 @@ export function createNewGroup(userId: string, input: CreateGroupInput): OpResul
   const inviteCode = generateInviteCode();
   const groupType = input.group_type || 'team';
 
-  db.prepare('INSERT INTO groups (id, name, description, invite_code, admin_id, group_type, invite_expires_at) VALUES (?,?,?,?,?,?,?)')
-    .run(groupId, input.name, input.description ?? null, inviteCode, userId, groupType, new Date(Date.now() + 30 * 86400_000).toISOString());
+  db.prepare('INSERT INTO groups (id, name, description, invite_code, admin_id, group_type, invite_expires_at, logo_url) VALUES (?,?,?,?,?,?,?,?)')
+    .run(groupId, input.name, input.description ?? null, inviteCode, userId, groupType, new Date(Date.now() + 30 * 86400_000).toISOString(), input.logo_url ?? null);
   db.prepare('INSERT INTO group_members (id, group_id, user_id, role) VALUES (?,?,?,?)')
     .run(nanoid(), groupId, userId, 'admin');
 
@@ -256,6 +257,24 @@ export function registerGroupRoutes(app: FastifyInstance) {
     `).all(req.params.id);
 
     return reply.send(requests);
+  });
+
+  // ─── Update Group Logo (admin only) ───
+  app.patch('/groups/:id/logo', async (req: FastifyRequest<{ Params: { id: string }; Body: { logo_url: string } }>, reply) => {
+    const userId = authenticate(req);
+    if (!userId) return reply.code(401).send({ error: 'UNAUTHORIZED' });
+
+    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(req.params.id) as Group | undefined;
+    if (!group) return reply.code(404).send({ error: 'GROUP_NOT_FOUND' });
+    if (group.admin_id !== userId) return reply.code(403).send({ error: 'ADMIN_ONLY' });
+
+    const { logo_url } = req.body ?? {};
+    if (!logo_url || typeof logo_url !== 'string' || logo_url.length > 500) {
+      return reply.code(400).send({ error: 'INVALID_URL', message: 'logo_url is required (max 500 chars)' });
+    }
+
+    db.prepare('UPDATE groups SET logo_url = ? WHERE id = ?').run(logo_url, req.params.id);
+    return reply.send({ id: req.params.id, logo_url });
   });
 
   // ─── Leave Group ───

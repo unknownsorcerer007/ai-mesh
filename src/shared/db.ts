@@ -300,6 +300,10 @@ function runMigrations(db: Database.Database) {
   if (!groupCols.find(c => c.name === 'invite_expires_at')) {
     db.exec("ALTER TABLE groups ADD COLUMN invite_expires_at TEXT");
   }
+  // M6: Group logo — add logo_url to groups
+  if (!groupCols.find(c => c.name === 'logo_url')) {
+    db.exec("ALTER TABLE groups ADD COLUMN logo_url TEXT");
+  }
 
   // M4: Email signups (newsletter / waitlist)
   db.exec(`

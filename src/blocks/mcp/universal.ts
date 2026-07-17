@@ -290,12 +290,13 @@ export function createMcpServer(): McpServer {
     name: z.string().min(1).max(100),
     description: z.string().max(2000).optional(),
     group_type: z.enum(['team', 'project', 'open']).optional().default('team'),
-  }, async ({ name, description, group_type }) => {
+    logo_url: z.string().url().max(500).optional().describe('URL for the group logo/avatar'),
+  }, async ({ name, description, group_type, logo_url }) => {
     const userId = auth.require();
     // F-06: 10 groups/hour per user.
     const rl = checkMcpRateLimit('create_group');
     if (!rl.ok) return { content: [{ type: 'text', text: rl.text }], isError: true };
-    const result = createNewGroup(userId, { name, description, group_type });
+    const result = createNewGroup(userId, { name, description, group_type, logo_url });
     if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.code}: ${result.message}` }], isError: true };
     return { content: [{ type: 'text', text: `✅ Group "${name}" created!\nID: ${result.data.id}\nInvite code: ${result.data.invite_code}` }] };
   });

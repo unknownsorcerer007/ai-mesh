@@ -985,7 +985,8 @@ body {
       </section>
 
       <!-- ═══════════ AUTH CARD — GitHub OAuth Only ═══════════ -->
-      <section style="padding:80px clamp(20px,5vw,60px);display:flex;justify-content:center;" id="authCard" aria-labelledby="auth-title">
+      <section style="padding:80px clamp(20px,5vw,60px);display:flex;justify-content:center;gap:24px;flex-wrap:wrap;" id="authCard" aria-labelledby="auth-title">
+        <!-- GitHub Login Card -->
         <div class="auth-card">
           <div>
             <h2 id="auth-title">Welcome to AI Mesh</h2>
@@ -995,6 +996,19 @@ body {
               Continue with GitHub
             </button>
             <p style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-muted);">🔒 Verified GitHub account required — prevents duplicate accounts</p>
+          </div>
+        </div>
+        <!-- Join Group Card -->
+        <div class="auth-card">
+          <div>
+            <h2>Join a Group</h2>
+            <p class="subtitle">Have an invite code? Enter it below to join a group</p>
+            <div class="input-group">
+              <label for="inviteCode">Invite Code</label>
+              <input class="input" type="text" id="inviteCode" placeholder="e.g. WvTIlP2ehRNbcXS-" autocomplete="off">
+            </div>
+            <button class="btn btn-primary" style="width:100%;" onclick="joinWithInvite()">Join Group</button>
+            <p style="text-align:center;margin-top:16px;font-size:13px;color:var(--text-muted);">🔗 You'll need to sign in with GitHub first</p>
           </div>
         </div>
       </section>
@@ -1469,6 +1483,39 @@ cd ai-mesh && npm install && npm run build && mkdir -p data',
     //  AUTH
     // ═══════════════════════════════════════
     function githubLogin() { window.location.href = API + '/auth/github'; }
+
+    // Join group with invite code
+    async function joinWithInvite() {
+      const code = document.getElementById('inviteCode').value.trim();
+      if (!code) { toast('Please enter an invite code', 'error'); return; }
+      if (!token) {
+        // Save code to localStorage, redirect to login
+        localStorage.setItem('pending_invite', code);
+        githubLogin();
+        return;
+      }
+      try {
+        const res = await fetch(API + '/groups/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ invite_code: code })
+        });
+        const data = await res.json();
+        if (!res.ok) { toast(data.message || data.error || 'Failed to join', 'error'); return; }
+        toast('Join request sent! Waiting for admin approval.', 'success');
+        document.getElementById('inviteCode').value = '';
+      } catch (e) { toast('Network error: ' + e.message, 'error'); }
+    }
+
+    // Auto-join if pending invite after OAuth redirect
+    (function() {
+      const pending = localStorage.getItem('pending_invite');
+      if (pending && token) {
+        localStorage.removeItem('pending_invite');
+        document.getElementById('inviteCode').value = pending;
+        joinWithInvite();
+      }
+    })();
 
     // Email signup (newsletter / waitlist)
     async function submitEmail(e) {
