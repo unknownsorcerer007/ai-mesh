@@ -162,13 +162,13 @@ export function respondToApproval(
   if (!responderRow) return err('USER_NOT_FOUND', 'User not found', 404);
   const responder = responderRow.username;
 
+  // ATOMIC transition: only succeeds if still pending AND not expired.
+  // Two concurrent admins can't both resolve — only the first UPDATE affects a row.
   const now = new Date().toISOString();
-  // ATOMIC transition: only succeeds if still pending. Two concurrent admins
-  // can't both resolve — only the first UPDATE affects a row.
   const result = db.prepare(
     `UPDATE approvals SET status = ?, resolved_at = ?, resolved_by = ?, reason = ?
-     WHERE id = ? AND status = 'pending'`,
-  ).run(approve ? 'approved' : 'rejected', now, responder, reason ?? null, approvalId);
+     WHERE id = ? AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?)`,
+  ).run(approve ? 'approved' : 'rejected', now, responder, reason ?? null, approvalId, now);
 
   if (result.changes === 0) {
     // Lost the race — someone else resolved it between our SELECT and UPDATE

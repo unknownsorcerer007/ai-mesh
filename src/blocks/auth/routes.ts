@@ -15,7 +15,6 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { GitHub } from 'arctic';
 import { nanoid } from 'nanoid';
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
 import { getDb } from '../../shared/db.js';
 import { getConfig } from '../../core/config.js';
 import { registerHealthCheck, type BlockHealth } from '../../core/health.js';
@@ -33,16 +32,7 @@ import type { User } from '../../shared/types.js';
 
 let github: GitHub | null = null;
 
-// F-04 fix: GitHub PAT format is ghp_ followed by 36 chars of [A-Za-z0-9].
-// Classic PATs are exactly 40 chars (ghp_ + 36). Fine-grained PATs use the
-// github_pat_ prefix and are longer, but this route only accepts classic PATs
-// (documented behaviour). Reject anything that doesn't match the exact format
-// BEFORE it reaches the GitHub API — saves a network round-trip and prevents
-// the route from being used as a free validation oracle for malformed tokens.
-const patSchema = z.string().regex(
-  /^ghp_[A-Za-z0-9]{36}$/,
-  'Provide a valid GitHub Personal Access Token (ghp_ followed by 36 alphanumeric characters)',
-);
+
 
 // Helper: hash a PAT/code for use as an account-key in the rate limiter.
 // We never store the raw token — only its SHA-256 hash. Even if the
@@ -307,129 +297,7 @@ export function registerAuthRoutes(app: FastifyInstance) {
     }
     return reply.send({ status: 'logged_out' });
   });
-
-  // ─── Register with username + password ───
-  // Creates account in DB. Username must be unique (DB UNIQUE constraint).
-  // Password is hashed with scrypt (stdlib). Returns session token.
-  // Rate-limited per-IP to blunt mass account creation.
-  app.post('/auth/register', async (req: FastifyRequest<{ Body: { username: string; password: string } }>, reply) => {
-    const rl = checkRateLimit(`register:${ipKey(req)}`, 3600_000, 10); // 10/hour per IP
-    if (!rl.allowed) {
-      reply.header('Retry-After', Math.ceil((rl.resetAt - Date.now()) / 1000));
-      return reply.code(429).send({ error: 'RATE_LIMITED', message: 'Too many registrations from this IP' });
-    }
-
-    const { username, password } = req.body ?? {};
-    if (!username || !password) {
-      return reply.code(400).send({ error: 'INVALID_REQUEST', message: 'username and password are required' });
-    }
-
-    const { registerUser } = await import('./username-auth.js');
-    const result = registerUser({ username, password });
-    if (!result.ok) return reply.code(result.status).send({ error: result.code, message: result.message });
-
-    return reply.code(201).send({
-      token: result.data.token,
-      user_id: result.data.user_id,
-      username: result.data.username,
-    });
-  });
-
-  // ─── Login with username + password ───
-  // Verifies credentials against DB. Rate-limited per-account (10/min).
-  app.post('/auth/login', async (req: FastifyRequest<{ Body: { username: string; password: string } }>, reply) => {
-    const { username, password } = req.body ?? {};
-    if (!username || !password) {
-      return reply.code(400).send({ error: 'INVALID_REQUEST', message: 'username and password are required' });
-    }
-
-    const { loginUser } = await import('./username-auth.js');
-    const result = loginUser({ username, password });
-    if (!result.ok) return reply.code(result.status).send({ error: result.code, message: result.message });
-
-    return reply.send({
-      token: result.data.token,
-      user_id: result.data.user_id,
-      username: result.data.username,
-    });
-  });
-
-  // ─── Login with GitHub PAT ───
-  // Documented as a fallback for environments where the OAuth flow can't run
-  // (headless servers, CI). F-01 + F-04 fix: per-IP + per-account (hashed PAT)
-  // + exponential backoff, AND strict PAT format validation so malformed tokens
-  // are rejected before reaching the GitHub API.
-  app.post('/auth/pat', async (req: FastifyRequest<{ Body: { pat: string } }>, reply) => {
-    const { pat: rawPat } = req.body ?? {};
-
-    // F-04: strict format check BEFORE rate-limiting or hitting GitHub.
-    // Rejects "ghp_x" (5 chars), "ghp_", "not_a_token", null, etc. The previous
-    // `pat.startsWith('ghp_')` check let any string starting with ghp_ through,
-    // turning the route into a free validation oracle.
-    const patResult = patSchema.safeParse(rawPat);
-    if (!patResult.success) {
-      return reply.code(400).send({ error: 'INVALID_PAT', message: patResult.error.issues[0]?.message || 'Invalid PAT format' });
-    }
-    const pat = patResult.data;
-
-    // F-01: per-IP + per-account + exponential backoff. The account key is the
-    // SHA-256 hash of the PAT — same PAT = same account, even from different IPs.
-    const accountKey = hashAccountKey(pat);
-    const rl = checkAuthRateLimit({
-      ipKey: ipKey(req),
-      routePrefix: 'pat',
-      accountKey,
-      ...AUTH_RL_PROFILE,
-      ipMaxRequests: 10, // PAT login is rarer than OAuth; tighter IP cap
-    });
-    if (!rl.allowed) {
-      reply.header('Retry-After', Math.ceil(rl.retryAfterMs / 1000));
-      return reply.code(429).send({ error: 'RATE_LIMITED', message: 'Too many PAT login attempts', retry_after_ms: rl.retryAfterMs });
-    }
-
-    try {
-      const userRes = await fetch('https://api.github.com/user', {
-        headers: { Authorization: `Bearer ${pat}`, 'User-Agent': 'ai-mesh' },
-      });
-      const ghUser = await userRes.json() as { id: number; login: string };
-
-      if (!ghUser.id || !ghUser.login) {
-        // F-01: record the failure — same PAT failing repeatedly triggers backoff.
-        recordAuthFailure({ ipKey: ipKey(req), accountKey, ...AUTH_RL_PROFILE });
-        return reply.code(401).send({ error: 'INVALID_PAT', message: 'GitHub PAT is invalid or expired' });
-      }
-
-      let user = db.prepare('SELECT * FROM users WHERE github_id = ?').get(String(ghUser.id)) as User | undefined;
-
-      if (!user) {
-        let username = ghUser.login;
-        const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-        if (existing) username = `${ghUser.login}_${nanoid(6)}`;
-
-        const newId = nanoid();
-        const { publicKey } = generateKeyPair();
-        const hashId = generateHashId(username, publicKey);
-
-        db.prepare('INSERT INTO users (id, username, hash_id, public_key, github_id, github_username) VALUES (?,?,?,?,?,?)')
-          .run(newId, username, hashId, publicKey, String(ghUser.id), ghUser.login);
-
-        user = db.prepare('SELECT * FROM users WHERE id = ?').get(newId) as User;
-      }
-
-      const token = generateToken(user.id, config.session.secret, config.session.tokenTtlMs);
-      // F-01: successful auth — clear the failure/backoff counter for this PAT hash.
-      recordAuthSuccess(accountKey);
-      return reply.send({ token, username: user.username, user_id: user.id });
-    } catch (err: any) {
-      // F-02 fix: GitHub API call failures (network, DNS, 5xx) leak fetch
-      // internals here. Mask in production; preserve in dev for debugging.
-      req.log.error({ err }, 'pat login failed');
-      // F-01: record the failure for backoff tracking.
-      recordAuthFailure({ ipKey: ipKey(req), accountKey, ...AUTH_RL_PROFILE });
-      const message = config.server.nodeEnv === 'production'
-        ? 'GitHub authentication failed'
-        : err.message;
-      return reply.code(500).send({ error: 'PAT_LOGIN_FAILED', message });
-    }
-  });
 }
+
+
+

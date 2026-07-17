@@ -37,6 +37,19 @@ const groupSubscriptions = new Map<string, Subscription>();
 const userSubscriptions = new Map<string, Subscription>();
 const wsRateLimits = new Map<string, { count: number; resetAt: number }>();
 
+// Per-user WS rate limit (not per-socket) — prevents 5x bypass with multiple sockets
+function checkWsRateLimit(userId: string): boolean {
+  const key = `ws:${userId}`;
+  const now = Date.now();
+  const entry = wsRateLimits.get(key);
+  if (!entry || now > entry.resetAt) {
+    wsRateLimits.set(key, { count: 1, resetAt: now + 60000 });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= WS_RATE_LIMIT;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Domain: Send Message
 // This block OWNS message-sending logic. Both the REST route (POST /messages)
@@ -146,7 +159,7 @@ export function registerMessageRoutes(app: FastifyInstance) {
     const parsed = parse(sendMessageSchema, req.body);
     if (!parsed.ok) return reply.code(400).send({ error: 'INVALID_REQUEST', message: parsed.error });
 
-    const result = sendMessageToGroup(userId, parsed.data);
+    const result = sendMessageToGroup(userId, { ...parsed.data, sender_ai: undefined });
     if (!result.ok) {
       if (result.code === 'RATE_LIMITED') {
         reply.header('X-RateLimit-Limit', config.rateLimit.maxRequests);
@@ -163,7 +176,7 @@ export function registerMessageRoutes(app: FastifyInstance) {
       group_id: parsed.data.group_id,
       sender_id: userId,
       sender_username: (db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string }).username,
-      sender_ai: parsed.data.sender_ai,
+      sender_ai: undefined, // REST users are humans, not agents — no impersonation
       type: parsed.data.type ?? 'text',
       content: parsed.data.message, // already sanitized inside business-logic
       metadata: parsed.data.metadata,
@@ -310,19 +323,11 @@ export function registerMessageRoutes(app: FastifyInstance) {
     // Flush pending messages to this newly-connected socket
     flushPendingToUser(userId, groups.map(g => g.group_id)).catch(() => {});
 
-    // Handle client messages with rate limiting
+    // Handle client messages with per-user rate limiting
     socket.on('message', (data: any) => {
-      const rl = wsRateLimits.get(socketId);
-      if (rl) {
-        if (Date.now() > rl.resetAt) {
-          rl.count = 0;
-          rl.resetAt = Date.now() + 60000;
-        }
-        rl.count++;
-        if (rl.count > WS_RATE_LIMIT) {
-          try { socket.send(JSON.stringify({ type: 'error', payload: { message: 'Rate limited' } })); } catch {}
-          return;
-        }
+      if (!checkWsRateLimit(userId)) {
+        try { socket.send(JSON.stringify({ type: 'error', payload: { message: 'Rate limited' } })); } catch {}
+        return;
       }
 
       try {

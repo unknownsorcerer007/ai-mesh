@@ -49,12 +49,17 @@ export function checkRateLimit(
   // Hot path: cached entry for this exact window
   const cached = cache.get(cacheKey);
   if (cached) {
-    if (cached.count >= maxRequests) {
+    // Fix: check window expiry — stale cache entries from a previous window
+    // can incorrectly block requests in the new window.
+    if (now > cached.resetAt) {
+      cache.delete(cacheKey);
+    } else if (cached.count >= maxRequests) {
       return { allowed: false, remaining: 0, resetAt };
+    } else {
+      cached.count++;
+      persistIncrement(key, windowStart);
+      return { allowed: true, remaining: maxRequests - cached.count, resetAt };
     }
-    cached.count++;
-    persistIncrement(key, windowStart);
-    return { allowed: true, remaining: maxRequests - cached.count, resetAt };
   }
 
   // Cold path: read from DB

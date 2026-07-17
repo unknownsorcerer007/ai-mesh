@@ -16,6 +16,7 @@ import { getDb } from '../../shared/db.js';
 import { registerHealthCheck } from '../../core/health.js';
 import { authenticate } from '../auth/index.js';
 import { checkRateLimit } from '../security/rate-limit.js';
+import { sanitizeMessage } from '../security/injection.js';
 import { publishToGroup } from '../relay/index.js';
 import { sendMessageToGroup } from '../messages/index.js';
 import { parse, threadReplySchema } from '../../shared/validation.js';
@@ -87,7 +88,7 @@ export function registerThreadingRoutes(app: FastifyInstance) {
     ).run(
       result.data.id, threadId, parsed.data.group_id, parsed.data.parent_message_id,
       userId, senderRow.username, parsed.data.sender_ai ?? null,
-      parsed.data.type, parsed.data.message, result.data.timestamp
+      parsed.data.type, sanitizeMessage(parsed.data.message), result.data.timestamp
     );
 
     return reply.send({

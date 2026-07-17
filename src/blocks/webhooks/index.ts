@@ -94,13 +94,15 @@ const genericSource: WebhookSource = {
 
 const SOURCES: WebhookSource[] = [githubSource, gitlabSource, genericSource];
 
-// Timing-safe string comparison. Both buffers must be the same length; we pad
-// with the expected length so a length-mismatch doesn't leak via timing.
+// Timing-safe string comparison. Both buffers padded to same length.
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
+  // Pad to max length so length mismatch doesn't leak via timing
+  const maxLen = Math.max(bufA.length, bufB.length);
+  const paddedA = Buffer.alloc(maxLen, 0); bufA.copy(paddedA);
+  const paddedB = Buffer.alloc(maxLen, 0); bufB.copy(paddedB);
+  return timingSafeEqual(paddedA, paddedB) && bufA.length === bufB.length;
 }
 
 export function registerWebhookRoutes(app: FastifyInstance) {

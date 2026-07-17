@@ -49,8 +49,8 @@ export function createNewGroup(userId: string, input: CreateGroupInput): OpResul
   const inviteCode = generateInviteCode();
   const groupType = input.group_type || 'team';
 
-  db.prepare('INSERT INTO groups (id, name, description, invite_code, admin_id, group_type) VALUES (?,?,?,?,?,?)')
-    .run(groupId, input.name, input.description ?? null, inviteCode, userId, groupType);
+  db.prepare('INSERT INTO groups (id, name, description, invite_code, admin_id, group_type, invite_expires_at) VALUES (?,?,?,?,?,?,?)')
+    .run(groupId, input.name, input.description ?? null, inviteCode, userId, groupType, new Date(Date.now() + 30 * 86400_000).toISOString());
   db.prepare('INSERT INTO group_members (id, group_id, user_id, role) VALUES (?,?,?,?)')
     .run(nanoid(), groupId, userId, 'admin');
 
@@ -64,8 +64,11 @@ export function requestJoinGroup(userId: string, inviteCode: string): OpResult<{
   const rl = checkRateLimit(`join:${userId}`, 300_000, 10);
   if (!rl.allowed) return err('RATE_LIMITED', 'Too many join attempts', 429);
 
-  const group = db.prepare('SELECT id, name, admin_id FROM groups WHERE invite_code = ?').get(inviteCode) as { id: string; name: string; admin_id: string } | undefined;
+  const group = db.prepare('SELECT id, name, admin_id, invite_expires_at FROM groups WHERE invite_code = ?').get(inviteCode) as { id: string; name: string; admin_id: string; invite_expires_at: string | null } | undefined;
   if (!group) return err('INVALID_INVITE_CODE', 'Invalid invite code', 404);
+  if (group.invite_expires_at && new Date(group.invite_expires_at) < new Date()) {
+    return err('INVITE_EXPIRED', 'Invite code has expired', 410);
+  }
 
   const existing = db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?').get(group.id, userId);
   if (existing) return err('ALREADY_MEMBER', 'Already a member', 409);
@@ -216,6 +219,8 @@ export function registerGroupRoutes(app: FastifyInstance) {
       SELECT u.id, u.username, u.hash_id, gm.role, gm.joined_at
       FROM group_members gm JOIN users u ON u.id = gm.user_id
       WHERE gm.group_id = ?
+      ORDER BY gm.joined_at ASC
+      LIMIT 100
     `).all(req.params.id);
 
     return reply.send({ ...(group as any), members });
@@ -295,13 +300,13 @@ export function registerGroupRoutes(app: FastifyInstance) {
     if (!group) return reply.code(404).send({ error: 'GROUP_NOT_FOUND' });
     if (group.admin_id !== userId) return reply.code(403).send({ error: 'ADMIN_ONLY' });
 
+    db.prepare('DELETE FROM groups WHERE id = ?').run(req.params.id);
+
     notifyGroup(req.params.id, {
       type: 'notification',
       payload: { group_id: req.params.id, status: 'deleted' },
       timestamp: new Date().toISOString(),
     }, undefined, groupMembersFetcher);
-
-    db.prepare('DELETE FROM groups WHERE id = ?').run(req.params.id);
 
     return reply.send({ status: 'deleted' });
   });

@@ -91,9 +91,20 @@ export async function saveMessages(messages: StoredMessage[]): Promise<void> {
   }
   for (const [groupId, msgs] of byGroup) {
     const file = getGroupFile(groupId);
-    const lines = msgs.map(m => JSON.stringify(m)).join('\n') + '\n';
+    // Dedup: read existing IDs and skip duplicates
+    const existingIds = new Set<string>();
+    if (existsSync(file)) {
+      const content = readFileSync(file, 'utf-8');
+      for (const line of content.split('\n')) {
+        if (!line.trim()) continue;
+        try { existingIds.add((JSON.parse(line) as StoredMessage).id); } catch {}
+      }
+    }
+    const newMsgs = msgs.filter(m => !existingIds.has(m.id));
+    if (newMsgs.length === 0) continue;
+    const lines = newMsgs.map(m => JSON.stringify(m)).join('\n') + '\n';
     await appendFileAsync(file, lines, { mode: FILE_MODE });
-    await updateIndex(groupId, msgs[msgs.length - 1]);
+    await updateIndex(groupId, newMsgs[newMsgs.length - 1]);
   }
 }
 

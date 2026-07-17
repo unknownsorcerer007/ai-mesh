@@ -295,6 +295,12 @@ function runMigrations(db: Database.Database) {
   // Index for efficient expiry cleanup queries
   db.exec("CREATE INDEX IF NOT EXISTS idx_approvals_expires ON approvals(status, expires_at) WHERE status = 'pending'");
 
+  // M5: Invite code expiry — add expires_at to groups
+  const groupCols = db.prepare('PRAGMA table_info(groups)').all() as Array<{ name: string }>;
+  if (!groupCols.find(c => c.name === 'invite_expires_at')) {
+    db.exec("ALTER TABLE groups ADD COLUMN invite_expires_at TEXT");
+  }
+
   // M4: Email signups (newsletter / waitlist)
   db.exec(`
     CREATE TABLE IF NOT EXISTS email_signups (

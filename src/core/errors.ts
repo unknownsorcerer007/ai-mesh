@@ -88,7 +88,7 @@ export function registerErrorHandler(app: FastifyInstance) {
   app.setErrorHandler((error: Error & { statusCode?: number; validation?: unknown }, _request, reply) => {
     // Known app error
     if (error instanceof AppError) {
-      return reply.code(error.statusCode).send(error.toJSON());
+      return reply.code(error.statusCode).send({ ...error.toJSON(), requestId: (reply as any).requestId });
     }
 
     // Fastify validation error
@@ -96,6 +96,7 @@ export function registerErrorHandler(app: FastifyInstance) {
       return reply.code(400).send({
         error: 'VALIDATION_ERROR',
         message: error.message,
+        requestId: (reply as any).requestId,
       });
     }
 
@@ -106,6 +107,7 @@ export function registerErrorHandler(app: FastifyInstance) {
       message: statusCode >= 500 && process.env.NODE_ENV === 'production'
         ? 'Internal server error'
         : error.message,
+      requestId: (reply as any).requestId,
     });
   });
 }

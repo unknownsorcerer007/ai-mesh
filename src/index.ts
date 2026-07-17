@@ -64,7 +64,7 @@ async function main() {
 
   // ─── Plugins ───
   await app.register(cors, {
-    origin: config.server.corsOrigin.length > 0 ? config.server.corsOrigin : (config.server.nodeEnv === 'production' ? ['https://' + (process.env.RAILWAY_PUBLIC_DOMAIN || 'localhost')] : true),
+    origin: config.server.corsOrigin.length > 0 ? config.server.corsOrigin : (config.server.nodeEnv === 'production' ? false : true),
     credentials: true,
     maxAge: 86400,
   });
@@ -76,6 +76,7 @@ async function main() {
     reply.header('X-Frame-Options', 'DENY');
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data:");
     if (config.server.nodeEnv === 'production') {
       reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
