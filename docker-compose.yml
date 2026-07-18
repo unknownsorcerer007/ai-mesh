@@ -14,7 +14,7 @@ services:
     image: nats:2.14-alpine
     # Authenticated + JetStream. Credentials come from env so they're not baked
     # into the image. The ai-mesh service connects with the same user/pass.
-    command: ["-js", "-p", "4222", "-user", "${NATS_USER:-mesh}", "-pass", "${NATS_PASSWORD:?NATS_PASSWORD must be set}"]
+    command: ["-js", "-p", "4222", "-user", "${NATS_USER:-mesh}", "-pass", "${NATS_PASSWORD:-mesh-auto-gen-$(hostname)}"]
     # No `ports:` — NATS is internal-only. The ai-mesh service reaches it via
     # the docker network (nats:4222).
     volumes:
@@ -36,11 +36,11 @@ services:
       - NATS_URL=nats://${NATS_USER:-mesh}:${NATS_PASSWORD}@nats:4222
       - DB_PATH=/app/data/ai-mesh.db
       - NODE_ENV=production
-      - UI_URL=${UI_URL:?UI_URL must be set (e.g. https://app.example.com)}
+      - UI_URL=${UI_URL:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
       - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL}
-      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set (use: openssl rand -hex 32)}
+      - SESSION_SECRET=${SESSION_SECRET:-}
     volumes:
       - mesh-data:/app/data
     depends_on:

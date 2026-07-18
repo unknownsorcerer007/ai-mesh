@@ -1,0 +1,23 @@
+# AI Mesh — Railway Configuration
+# One-click deploy: https://railway.app/template/ai-mesh
+#
+# Railway auto-sets: PORT, RAILWAY_STATIC_URL, RAILWAY_PUBLIC_DOMAIN
+# AI Mesh auto-detects UI_URL from RAILWAY_STATIC_URL.
+# SESSION_SECRET is auto-generated on first start.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "/app/start-prod.sh"
+healthcheckPath = "/health"
+healthcheckTimeout = 10
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+
+[env]
+NODE_ENV = "production"
+PORT = "3737"
+# SESSION_SECRET: auto-generated if not set. Set manually for persistent tokens.
+# UI_URL: auto-detected from RAILWAY_STATIC_URL. Override only if needed.
