@@ -21,6 +21,7 @@ import { getConfig } from '../../core/config.js';
 import { subscribeToGroup, subscribeToUser, ensureConsumer, getPendingMessages, getAllPendingMessages, publishToGroup } from '../relay/index.js';
 import { logMessage, logFullMessage } from '../logs/index.js';
 import { queueNotificationForUser } from '../notifications/index.js';
+import { notifyAgentWebhook } from '../webhooks/agent-notify.js';
 import { registerUserSocket, unregisterUserSocket, deliverToUser, getOnlineSocketCount } from '../../shared/realtime.js';
 import { isGroupMember } from '../groups/index.js';
 import { checkRateLimit } from '../security/rate-limit.js';
@@ -136,6 +137,20 @@ async function deliverToGroupMembers(groupId: string, msg: RelayMessage, exclude
         sender: msg.sender_username,
         sender_ai: msg.sender_ai,
         timestamp: msg.timestamp,
+      });
+
+      // Notify agent webhook (if registered) so the AI agent wakes up
+      const groupRow = db.prepare('SELECT name FROM groups WHERE id = ?').get(groupId) as { name: string } | undefined;
+      notifyAgentWebhook(m.user_id, {
+        type: 'new_message',
+        group_id: groupId,
+        group_name: groupRow?.name || groupId,
+        sender: msg.sender_username,
+        sender_ai: msg.sender_ai,
+        message_preview: msg.content.slice(0, 200),
+        message_id: msg.id,
+        timestamp: msg.timestamp,
+        total_pending: 0, // Will be populated by agent on fetch
       });
     }
   }

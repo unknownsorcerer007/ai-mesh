@@ -39,6 +39,7 @@ import { nanoid } from 'nanoid';
 import {
   createNewGroup, requestJoinGroup, respondToJoinRequest, leaveGroup, isGroupMember,
 } from '../groups/index.js';
+import { registerAgentWebhook, unregisterAgentWebhook, getAgentWebhook } from '../webhooks/agent-notify.js';
 import { sendMessageToGroup } from '../messages/index.js';
 import { submitApproval, respondToApproval } from '../approval/index.js';
 import type { RelayMessage } from '../../shared/types.js';
@@ -384,6 +385,35 @@ export function createMcpServer(): McpServer {
       target_lang
     );
     return { content: [{ type: 'text', text: `${translated}\n\n[${target_lang}] Type: ${typeLabel}` }] };
+  });
+
+  // ─── register_agent_webhook ───
+  // Register a callback URL that the server will POST to when new messages
+  // arrive while you're offline. Your local MCP server receives the POST and
+  // can call receive_messages() to fetch the actual content.
+  server.tool('register_agent_webhook', 'Register a webhook URL for automatic message notifications. When messages arrive while you are offline, the server POSTs to this URL so your agent wakes up.', {
+    webhook_url: z.string().url().describe('URL to POST notifications to (must be http/https, localhost in production)'),
+    group_ids: z.array(z.string()).optional().describe('Filter: only notify for these groups. Omit for all groups.'),
+  }, async ({ webhook_url, group_ids }) => {
+    const userId = auth.require();
+    const result = registerAgentWebhook(userId, webhook_url, group_ids);
+    if (!result.ok) return { content: [{ type: 'text', text: `❌ ${result.error}` }], isError: true };
+    return { content: [{ type: 'text', text: `✅ Agent webhook registered (id: ${result.id})\nURL: ${webhook_url}\nGroups: ${group_ids?.join(', ') || 'all'}\n\nWhen messages arrive while you're offline, the server will POST to this URL. Your local server should call receive_messages() when it receives the POST.` }] };
+  });
+
+  // ─── unregister_agent_webhook ───
+  server.tool('unregister_agent_webhook', 'Remove your agent webhook. You will stop receiving automatic notifications.', {}, async () => {
+    const userId = auth.require();
+    const removed = unregisterAgentWebhook(userId);
+    return { content: [{ type: 'text', text: removed ? '✅ Agent webhook removed' : 'ℹ️ No webhook was registered' }] };
+  });
+
+  // ─── get_agent_webhook ───
+  server.tool('get_agent_webhook', 'Check your current agent webhook registration.', {}, async () => {
+    const userId = auth.require();
+    const webhook = getAgentWebhook(userId);
+    if (!webhook) return { content: [{ type: 'text', text: 'ℹ️ No agent webhook registered. Use register_agent_webhook to set one up.' }] };
+    return { content: [{ type: 'text', text: `🔔 Agent Webhook:\nURL: ${webhook.webhook_url}\nGroups: ${webhook.groups || 'all'}\nActive: ${webhook.active ? 'Yes' : 'No'}\nFail count: ${webhook.fail_count}\nLast notified: ${webhook.last_notified_at || 'never'}` }] };
   });
 
   // ─── get_pending_requests ───

@@ -8,7 +8,8 @@
     "ai-mesh": "dist/index.js",
     "ai-mesh-mcp": "dist/blocks/mcp/entry.js",
     "ai-mesh-ui": "dist/tui/chat-widget.js",
-    "ai-mesh-cli": "dist/blocks/mcp/cli.js"
+    "ai-mesh-cli": "dist/blocks/mcp/cli.js",
+    "ai-mesh-sidebar": "dist/blocks/sidebar/daemon.js"
   },
   "files": [
     "dist",

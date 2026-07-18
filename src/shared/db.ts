@@ -220,6 +220,22 @@ export function setupSchema() {
       backoff_until INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_auth_backoff_until ON auth_backoff(backoff_until);
+
+    -- Agent webhooks: registered callback URLs for AI agents.
+    -- When a message arrives for an offline user who has a registered webhook,
+    -- the server POSTs a notification to the webhook URL so the agent wakes up.
+    CREATE TABLE IF NOT EXISTS agent_webhooks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      webhook_url TEXT NOT NULL,
+      groups TEXT,  -- JSON array of group_ids to filter, null = all groups
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      last_notified_at TEXT,
+      fail_count INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_webhooks_user ON agent_webhooks(user_id, active);
   `);
 
   // Run idempotent column migrations (SQLite ALTER TABLE ADD COLUMN is safe

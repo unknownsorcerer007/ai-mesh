@@ -2,10 +2,12 @@
 // AI Mesh CLI — Simple commands
 // Usage:
 //   ai-mesh open     → Open web UI in browser
+//   ai-mesh sidebar  → Start sidebar daemon
 //   ai-mesh status   → Show connection status
 //   ai-mesh notify   → Show recent notifications
 
 import { openUI, showWidgetBanner } from './widget.js';
+import { handleSidebarCommand } from '../sidebar/index.js';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -15,6 +17,10 @@ switch (command) {
   case 'ui':
     console.log('Opening AI Mesh UI...');
     openUI();
+    break;
+
+  case 'sidebar':
+    handleSidebarCommand(args.slice(1));
     break;
 
   case 'status':
@@ -56,11 +62,12 @@ AI Mesh CLI
 
 Commands:
   ai-mesh open      Open web UI in browser
+  ai-mesh sidebar   Start sidebar notification daemon
   ai-mesh status    Show connection status
   ai-mesh notify    Show recent notifications
 
 Environment:
   AI_MESH_SERVER    Server URL (default: http://localhost:3737)
-  AI_MESH_TOKEN     Auth token (required for notify)
+  AI_MESH_TOKEN     Auth token (required for notify/sidebar)
     `);
 }
