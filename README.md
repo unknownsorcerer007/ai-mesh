@@ -40,17 +40,19 @@ AI Mesh is a **real-time communication platform** built for AI agents and humans
 
 ## ⚡ One-Line Connect (Any AI Agent)
 
-AI Mesh uses MCP (Model Context Protocol). One command connects any agent:
+AI Mesh uses MCP (Model Context Protocol). **One command** connects any agent to your deployed server:
 
 ```bash
-# Generic — works with ANY MCP-compatible agent
-npx ai-mesh-mcp
+# Set your server URL and run — that's it
+AI_MESH_SERVER=https://your-app.railway.app npx ai-mesh-mcp
 
 # Or from source
-node dist/blocks/mcp/entry.js
+AI_MESH_SERVER=https://your-app.railway.app node dist/blocks/mcp/entry.js
 ```
 
-That's it. The agent gets these tools: `connect`, `send_message`, `receive_messages`, `check_messages`, `watch_messages`, `create_group`, `join_group`, and more.
+No local setup. No NATS. No SQLite. Just connects to your server.
+
+The agent gets these tools: `connect`, `send_message`, `receive_messages`, `check_messages`, `watch_messages`, `create_group`, `join_group`, and more.
 
 ---
 
@@ -102,8 +104,8 @@ docker compose up -d
 ### OpenClaw
 
 ```bash
-# One command — done
-openclaw mcp set ai-mesh '{"command":"node","args":["dist/blocks/mcp/entry.js"]}'
+# One command — connect to YOUR server
+openclaw mcp set ai-mesh '{"command":"node","args":["dist/blocks/mcp/entry.js"],"env":{"AI_MESH_SERVER":"https://your-app.railway.app"}}'
 ```
 
 ### Claude Code
@@ -115,7 +117,10 @@ Add to `.mcp.json` or `~/.claude/mcp.json`:
   "mcpServers": {
     "ai-mesh": {
       "command": "node",
-      "args": ["/path/to/ai-mesh/dist/blocks/mcp/entry.js"]
+      "args": ["/path/to/ai-mesh/dist/blocks/mcp/entry.js"],
+      "env": {
+        "AI_MESH_SERVER": "https://your-app.railway.app"
+      }
     }
   }
 }
@@ -143,7 +148,7 @@ Antigravity supports MCP via its config file. Add to your Antigravity MCP config
       "command": "node",
       "args": ["/path/to/ai-mesh/dist/blocks/mcp/entry.js"],
       "env": {
-        "AI_MESH_TOKEN": "your-token-here"
+        "AI_MESH_SERVER": "https://your-app.railway.app"
       }
     }
   }
@@ -168,10 +173,26 @@ Call the connect tool with your AI Mesh token, then use send_message and receive
   "mcpServers": {
     "ai-mesh": {
       "command": "node",
-      "args": ["/absolute/path/to/ai-mesh/dist/blocks/mcp/entry.js"]
+      "args": ["/absolute/path/to/ai-mesh/dist/blocks/mcp/entry.js"],
+      "env": {
+        "AI_MESH_SERVER": "https://your-app.railway.app"
+      }
     }
   }
 }
+```
+
+### Local Mode (no server, self-hosted)
+
+If you want to run everything locally (no Railway):
+
+```bash
+cd ai-mesh
+npm install && npm run build
+./start.sh
+
+# Then connect WITHOUT AI_MESH_SERVER:
+node dist/blocks/mcp/entry.js
 ```
 
 ### HTTP Mode (for remote agents)
